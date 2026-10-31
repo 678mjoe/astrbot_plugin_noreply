@@ -1,6 +1,6 @@
 # 本地接手入口
 
-M1 离线实现已经完成。先阅读 `AGENTS.md`、`README.md`、
+M1 离线实现已经完成；M2 已有一次成功自主生成的 shadow 样本，但因内置主动回复竞争尚未验收通过。先读 `docs/M2_TRIAL_2026-10-31.md` 与 `docs/CONTEXT_DESIGN.md`，再阅读 `AGENTS.md`、`README.md`、
 `docs/IMPLEMENTATION_STATUS.md`、`docs/ACCEPTANCE.md` 和
 `docs/COMPATIBILITY.md`，了解实际证据与部署边界。
 

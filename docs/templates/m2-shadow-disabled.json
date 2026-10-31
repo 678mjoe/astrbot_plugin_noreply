@@ -1,0 +1,14 @@
+{
+  "enabled": false,
+  "shadow_mode": true,
+  "allowed_groups": [],
+  "persona_id": "",
+  "window_messages": 20,
+  "message_chars": 500,
+  "context_chars": 6000,
+  "attempt_interval": 60.0,
+  "reply_cooldown": 60.0,
+  "timeout": 30.0,
+  "max_reply_chars": 600,
+  "max_groups": 1
+}
