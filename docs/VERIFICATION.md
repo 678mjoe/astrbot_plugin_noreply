@@ -1,0 +1,26 @@
+# 验证记录
+
+## 验证范围
+
+这是文档交接与源码接口探针，不是生产插件测试。没有调用真实模型、连接聊天平台、启动完整 AstrBot 或修改实际部署。
+
+`research/probe.py` 每个基线包含 12 项测试，实际执行从对应快照提取的 `Context.llm_generate()`、`Context.get_current_chat_provider_id()`、`ProcessStage.process()` 和 `PersonaManager.get_persona()`。外部 Provider、事件和子阶段使用标准库最小桩。
+
+## Mac 项目目录最终复核
+
+已在最终目录 `/Users/m.joe/projects/astrbot_plugin_noreply`、Mac 系统 Python 3.9.6 下实际运行：
+
+| 命令 | 真实结果 |
+| --- | --- |
+| `python3 tools/verify_handoff.py` | 通过；6 份源码快照 hash、5 个本地 Markdown 链接校验正常 |
+| `python3 research/probe.py` | 部署版 4.29.1：12 tests，OK |
+| `ASTRBOT_PROBE_SOURCE="$PWD/research/snapshots/research-master/sources" python3 research/probe.py` | 固定研究提交：12 tests，OK |
+
+这些验证在 Pi 暂存目录也执行通过。交接文件的 SHA-256 在传输后另行核对。Git 状态与初始提交请以项目内 `git status`、`git log -1` 为准；不把探针或文档检查计为 M1 产品测试。
+
+## 未验证项
+
+- `main.py` / `engine.py` 产品代码和产品测试：尚未创建。
+- Python >=3.12 的完整开发环境与 AstrBot SDK 依赖：尚未安装到本项目。
+- 真实模型的协议遵守、插话质量、费用、平台送达：未测试。
+- M2 shadow/live 与 M3 正常会话历史桥接：未实施。

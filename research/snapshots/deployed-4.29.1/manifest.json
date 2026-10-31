@@ -1,0 +1,17 @@
+{
+  "repository": "AstrBotDevs/AstrBot",
+  "distribution_version": "4.29.1",
+  "requires_python": ">=3.12",
+  "origin": "Installed AstrBot distribution on Pi, read-only source snapshot; not a Git checkout.",
+  "files": {
+    "astrbot/core/persona_mgr.py": {
+      "sha256": "78f31f5c5c8b580fa2a4f4c888c64ea451c6d19880f607c2ae9a8707a9571cb1"
+    },
+    "astrbot/core/pipeline/process_stage/stage.py": {
+      "sha256": "b4e83a1d81955351a863ddb56016153b531333b6b9e4cd0df2e07db4ea13a268"
+    },
+    "astrbot/core/star/context.py": {
+      "sha256": "10f5f5dd40491564ee196854abb5f6a4e4e6fc46a6c5e62e29935e2c53b6294f"
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "repository": "AstrBotDevs/AstrBot",
+  "commit": "3d92821ad9d90df33fc242e7b159a3260075eb2c",
+  "purpose": "Original source snapshots for AST-only architecture probes; not an AstrBot installation.",
+  "files": {
+    "astrbot/core/persona_mgr.py": {
+      "git_blob_sha1": "3b0fae7ce6681206ac5208c0f27790656912e539",
+      "url": "https://github.com/AstrBotDevs/AstrBot/blob/3d92821ad9d90df33fc242e7b159a3260075eb2c/astrbot/core/persona_mgr.py"
+    },
+    "astrbot/core/pipeline/process_stage/stage.py": {
+      "git_blob_sha1": "4298c5d570a36a65dd3aa77aae6be13aaa61272e",
+      "url": "https://github.com/AstrBotDevs/AstrBot/blob/3d92821ad9d90df33fc242e7b159a3260075eb2c/astrbot/core/pipeline/process_stage/stage.py"
+    },
+    "astrbot/core/star/context.py": {
+      "git_blob_sha1": "be1ce5e75622f09b13d4ed0c60af2f73edca384f",
+      "url": "https://github.com/AstrBotDevs/AstrBot/blob/3d92821ad9d90df33fc242e7b159a3260075eb2c/astrbot/core/star/context.py"
+    }
+  }
+}
