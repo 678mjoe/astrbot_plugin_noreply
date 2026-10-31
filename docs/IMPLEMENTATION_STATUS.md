@@ -100,4 +100,4 @@ astrbot_plugin_noreply/
 
 ## 后续诊断增量
 
-为下一轮测试新增 diagnostics.py（运行包必须包含此模块）、默认关闭的 diagnostics_enabled 和私有输入/模型正文记录。最终产品回归 108 项通过，Ruff 和交接完整性通过；第三方 audioop 告警仍存在。原 M1 测试数字与五文件清单是历史记录，当前运行包改为六文件，详见 [诊断记录说明](DIAGNOSTICS.md)。本轮没有开启 live 或新模型调用。
+为下一轮测试新增 diagnostics.py（运行包必须包含此模块）、默认关闭的 diagnostics_enabled 和私有输入/模型正文记录。最终产品回归 108 项通过，Ruff 和交接完整性通过；第三方 audioop 告警仍存在。原 M1 测试数字与五文件清单是历史记录，诊断版运行包当时改为六文件，详见 [诊断记录说明](DIAGNOSTICS.md)。后续新增原版群上下文运行期屏蔽，当前包还必须包含 `native_context.py`，共七文件。本轮没有开启 live 或新模型调用。

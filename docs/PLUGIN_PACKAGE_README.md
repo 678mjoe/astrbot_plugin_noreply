@@ -2,9 +2,11 @@
 
 这是 v0.1.0 的最小运行文件包，不含开发依赖、真实群配置、聊天内容或密钥。插件需要 Python >=3.12；当前已离线验证的 SDK 为 AstrBot 4.29.3，部署前仍应核实实际接口。
 
-安装后出厂关闭：enabled=false、shadow_mode=true、allowed_groups=[]、persona_id=""。空白名单不匹配任何群。白名单采用平台实例ID|机器人自身ID|真实群ID，不能用普通群号替代平台的群 OpenID。
+安装后出厂关闭：enabled=false、shadow_mode=true、all_groups=false、allowed_groups=[]、persona_id=""。默认空白名单不匹配任何群；显式 all_groups=true 才开启全群模式。白名单采用平台实例ID|机器人自身ID|真实群ID，不能用普通群号替代平台的群 OpenID。
 
 先在明确许可的单群限时 shadow：仍会调用模型，但不会发送正文；精确独立的 <noreply> 表示沉默。只有用户许可的 live 才能向群提交纯文本。插件不提供工具循环、不统一正常会话历史，观察窗口重启丢失。
+
+运行包必须同时包含 main.py、engine.py、diagnostics.py、native_context.py、metadata.yaml、_conf_schema.json 和 README.md。插件接管群时自动屏蔽原版群上下文缓存/注入，不改原设置，停用或卸载后恢复。普通会话历史保留，但插件窗口尚未桥接到正常 @ 路径。
 
 修改窗口、容量或时间限制后需重载插件。AstrBot 管理员可用 /noreply_clear 清空本群插件记忆；命令前缀遵守框架配置。
 

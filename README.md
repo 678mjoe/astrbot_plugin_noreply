@@ -35,6 +35,12 @@ ASTRBOT_PROBE_SOURCE="$PWD/research/snapshots/research-master/sources" python3 r
 
 第一版不承诺自主插话自动进入正常 `@` 对话历史；完整上下文桥接单列为后续阶段。
 
+## 原版群上下文屏蔽
+
+插件启用且接管该群时，在内置组件实例的群上下文判断入口安装可撤销拦截：暂停原版缓存/额外群背景注入，不永久改写原版 `group_icl_enable` 等配置。插件停用后按当前原版设置运行，卸载时撤销拦截；不影响私聊、未接管群、正常会话历史或独立数据库群消息记录。正常 `@` 对话也不再收到原版那段额外群背景；插件自身窗口仍只用于自主支路，尚未桥接到普通会话。
+
+运行包必须包含 `native_context.py`。当前 SDK 的内置群上下文入口若改变，日志会明确提示 guard unavailable，需重新验证兼容性。仅调整已有内置组件实例，不修改 AstrBot 核心源码或落盘配置。
+
 ## 配置与使用边界
 
 `_conf_schema.json` 中的出厂值为 `enabled=false`、`shadow_mode=true`、`all_groups=false`、`allowed_groups=[]`、`persona_id=""`。必须显式配置现有人设，并选择全群模式或准确群条目；没有模型或人设时不回退到其他模型或人设。

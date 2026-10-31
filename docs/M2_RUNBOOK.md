@@ -20,7 +20,7 @@
 
 ## 运行顺序
 
-1. 私有备份运行配置及数据库；安装包严格只含 `main.py`、`engine.py`、`metadata.yaml`、`_conf_schema.json`、独立运行说明 README，不带开发环境、快照、运行数据或密钥。
+1. 私有备份运行配置及数据库；安装包严格只含 `main.py`、`engine.py`、`diagnostics.py`、`native_context.py`、`metadata.yaml`、`_conf_schema.json`、独立运行说明 README，不带开发环境、快照、运行数据或密钥。
 2. 先保持 shadow=true。真实群白名单仅一项，沿用原始 UMO 的 Provider 选择，不改全局/群路由。
 3. 本轮试验限定为一个短窗口，尝试间隔 60 秒；到期停止本插件试验。时间窗口和低频限制用于约束开销，不能宣传成 Provider 内部绝对请求/计费上限。
 4. 检查框架成功加载、面板可达、原插件与普通 @/命令仍在。只允许必要的 AstrBot 服务操作，不动 Hermes/Magpie。

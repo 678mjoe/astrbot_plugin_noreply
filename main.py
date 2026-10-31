@@ -28,6 +28,7 @@ from .engine import (
     ModelOutput,
     serialize_snapshot,
 )
+from .native_context import NativeContextGate
 
 type ConfigValue = (
     str | int | float | bool | None | list[ConfigValue] | dict[str, ConfigValue]
@@ -120,6 +121,8 @@ class NoReplyPlugin(Star):
         self.settings = self._read_settings()
         self.engine = Engine(self.settings.limits)
         self._recorder: Recorder | None = None
+        self._native_context_gate: NativeContextGate | None = None
+        self._native_context_closed = False
         self._compatible = all(
             callable(method)
             for method in (
@@ -131,6 +134,53 @@ class NoReplyPlugin(Star):
         )
         if not self._compatible:
             self.logger.warning("noreply disabled: required SDK capability missing")
+
+    def _native_context_blocked(self, event: AstrMessageEvent) -> bool:
+        if self._native_context_closed:
+            return False
+        settings = self._refresh_settings()
+        key = self._key(event)
+        return (
+            key is not None
+            and bool(settings.persona_id)
+            and self._allowed(event, key, settings)
+        )
+
+    def _install_native_context_gate(self) -> bool:
+        if self._native_context_closed:
+            return False
+        getter = getattr(self.context, "get_registered_star", None)
+        native = getter("astrbot") if callable(getter) else None
+        owner = getattr(native, "star_cls", None)
+        if owner is None:
+            return False
+        if self._native_context_gate is not None:
+            if self._native_context_gate.owner is owner:
+                return True
+            self._native_context_gate.restore()
+            self._native_context_gate = None
+        try:
+            self._native_context_gate = NativeContextGate(
+                owner, self._native_context_blocked
+            )
+        except (AttributeError, TypeError):
+            self.logger.error("noreply native group context guard unavailable")
+            return False
+        self.logger.info("noreply native group context guard installed")
+        return True
+
+    async def initialize(self) -> None:
+        self._install_native_context_gate()
+
+    @filter.on_astrbot_loaded()
+    async def on_native_context_ready(self) -> None:
+        if not self._install_native_context_gate():
+            self.logger.error("noreply native group context guard unavailable")
+
+    @filter.on_plugin_loaded()
+    async def on_native_plugin_loaded(self, metadata) -> None:
+        if getattr(metadata, "name", None) == "astrbot":
+            self._install_native_context_gate()
 
     def _read_settings(self) -> Settings:
         try:
@@ -472,4 +522,8 @@ class NoReplyPlugin(Star):
         )
 
     async def terminate(self) -> None:
+        self._native_context_closed = True
+        if self._native_context_gate is not None:
+            self._native_context_gate.restore()
+            self._native_context_gate = None
         await self.engine.close()
