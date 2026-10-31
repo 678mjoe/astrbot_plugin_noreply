@@ -1,5 +1,7 @@
 # AstrBot `<noreply>` 插件 Implementation Plan
 
+> 当前主路径已实现持久化逐消息批量判定，用户已批准全群正式 live；请先读 [批量设计](docs/BATCH_JUDGMENTS.md) 和 [当前状态](docs/IMPLEMENTATION_STATUS.md)。下文旧 M1/M2 单群试验与未部署描述为历史路线，不代表当前开关。正常 Agent 历史桥接仍未实现。
+
 > **For Hermes:** Use subagent-driven-development skill to implement this plan task-by-task. 其他本地 agent 可直接依照同一任务顺序执行，不要求具备 Hermes 专用工具。
 
 **Goal:** 交付可离线验证的自主群聊插话插件：同一聊天模型输出正文或 `<noreply>`，默认关闭和 shadow，不改动现有部署。

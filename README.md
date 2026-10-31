@@ -1,112 +1,66 @@
 # AstrBot NoReply
 
-让同一个聊天模型根据群聊背景，选择**接话**或输出 `<noreply>` 保持沉默的 AstrBot 插件项目。
+让同一个聊天模型根据人设和群聊背景，对**每条待判消息**明确决定回复或不回复，再按消息顺序发送需要回复的正文。
 
-**当前状态：M1 离线验收通过，M2 已安装并完成一次有真实自主生成样本的单群 shadow。** 观察到一条候选回复，未启用本插件 live；同时发现测试群绑定档的内置概率回复仍开启，须先处理竞争再继续验收。试验已自动关闭。见 [M2 记录](docs/M2_TRIAL_2026-10-31.md) 与 [上下文设计对照](docs/CONTEXT_DESIGN.md)。
+当前主路径为持久化批量判定，`batch_mode=true`。用户已批准的生产范围是全群正式 live；出厂仍为关闭、shadow、非全群。历史 shadow/M1 记录不代表当前运行开关。完整设计与边界见 [批量判定](docs/BATCH_JUDGMENTS.md)。
 
-## 给本地 agent 的入口
+## 现在如何工作
 
-先读 [AGENTS.md](AGENTS.md)、[实现状态](docs/IMPLEMENTATION_STATUS.md) 和 [验收清单](docs/ACCEPTANCE.md)。[ROADMAP.md](ROADMAP.md) 保留实施步骤及 M2/M3 边界；[START_HERE.md](START_HERE.md) 是后续接手入口。
+1. 收到符合条件的普通群文本，先事务性写入 SQLite，分配稳定 ID。相同群的重复平台消息 ID 不重复入队。
+2. 一次请求提交最多 32 条待判消息，并附最近最多 300 条背景观察；两者去重。待判数据不受背景窗口淘汰影响。
+3. 要求模型按本批 ID 顺序返回 `decisions`：每项必须有整数 `id` 和布尔 `reply`，要回复时还必须有合法 `text`。
+4. 缺项、重复、陌生 ID、乱序、非法正文或工具调用都会使本批无效；不把失败当成沉默，不清待判。自动退避、缩小重试批次，个别失败项不会独占后续判定。
+5. 合法批次一次性落盘，再独立发送 `reply=true` 的正文。忙时、尝试间隔和发言冷却不会丢消息，也不依赖下一条消息来推进。
+6. 插件初始化自动恢复待判和待发送工作。发送中断/超时但结果不确定时记 `unknown`，不自动重放；严格按序发送不会越过更早的未判或不确定项。
+
+**保证边界：**保证已持久化的合格输入不会因 busy、cooldown、300 条淘汰或正常重启静默消失，不保证外部模型永久失败时仍能在有限时间内成功，也不把 API 确认等同终端送达。主动清空的输入单列 `cancelled`，不是已判。
+
+## 范围与身份
+
+- 只接管来源 AI 开启、插件范围内的未显式唤醒纯文本群消息。私聊、命令、正常 `@`、混合图片/引用/提及组件不进入自主待判；普通链路不增加额外模型调用。
+- `all_groups=true` 明确开启所有群；默认 false 时仅匹配 `平台实例 ID|机器人 ID|真实群 ID` 的准确白名单，空列表不开放任何群。
+- QQ 官方 `@` 与未 `@` 消息的 self_id 表达不同，批量模式用适配器实例 + 固定 `qq_official` 标记 + 真实群 ID 归并物理群。QQ 白名单的机器人字段使用该固定标记。
+- 每条观察保留 nullable `is_bot` 和 `is_admin`。后者是 **AstrBot 后台配置的管理员**，不是群管理员；读取失败独立降级 unknown。本地 assistant 为 bot=true/admin=null。其他 bot 不自动过滤；明确 `is_you=true` 的自身回声不再入队。
+- 接管群通过可撤销运行期 gate 屏蔽原版额外群背景，不改原版配置。停用/卸载恢复；普通 Agent 历史不被清空。插件窗口尚未桥接到正常 `@` 历史。
+
+## 配置
+
+出厂 `enabled=false`、`shadow_mode=true`、`all_groups=false`、`allowed_groups=[]`、`persona_id=""`。保持生产已有开关，不把维护部署当成重新做限时试验。
+
+| 配置 | 默认值 | 含义 |
+| --- | --- | --- |
+| `batch_mode` | true | 持久化逐条批量判定；false 为不保证覆盖的旧快照兼容路径 |
+| `batch_size` | 32 | 每次最多待判条数，范围 1–128 |
+| `batch_retry_base` | 5 秒 | 失败项独立指数退避，最长 60 秒；仍遵守尝试间隔 |
+| `window_messages` | 300 | 近期背景观察数；未判输入独立保留 |
+| `message_chars` | 0 | 正文字数上限，0 不截断 |
+| `context_chars` | 0 | 完整观察 JSON 上限，0 不限制；正值先删旧背景，待判超限则拆小重试，不悄悄漏 ID |
+| `attempt_interval` | 10 秒 | 同群模型调用最小间隔，包含沉默和失败 |
+| `reply_cooldown` | 30 秒 | 同群相邻 live 正文确认之间的间隔；不阻止新消息被判定 |
+| `timeout` | 30 秒 | 单次模型/发送操作截止时间 |
+| `max_reply_chars` | 600 | 每条正文最长字符数 |
+| `max_groups` | 128 | 批量模式并发群 worker 数；更多群留队，不拒绝接收 |
+| `diagnostics_enabled` | false | 可选完整私有请求/模型输出记录，与必需的队列数据库分开 |
+
+变更 `Limits` 类参数仍需重载插件；重载前暂停自主执行。开关、人设、范围变化与显式唤醒会使旧发言失效；已持久化待判不因此冒充已判。私有队列保存输入正文、逐条结论和发送状态，即使完整诊断关闭也存在；目录 0700、数据库 0600，勿入库。旧正文随背景淘汰释放，未判和未确认发送正文保留；覆盖元数据和去重账本不自动删除，需监控磁盘。
+
+## 管理命令
+
+- `/noreply_status`：AstrBot 管理员查看当前物理群 `received/pending/judged/cancelled/send_pending/accepted/unknown`。
+- `/noreply_clear`：管理员清空当前群背景与待判，取消排队发言，并明确放弃 unknown 发送以解除顺序阻塞；不重发旧正文，不撤回已发送消息。清空不是成功判定。
+
+发送已在平台进行时，任何清空/停用都无法撤回网络请求。QQ 官方使用现有客户端的群消息 API，并要求实际返回消息 ID 才记 API 确认；其他平台的 `session:handed_off` 只代表 SDK 派发，不能混称终端送达。异步自主发送不走完整 Agent 或常规发送后 hook 链；标准会话历史桥接仍未实现。
+
+## 开发与验证
 
 ```bash
 cd ~/projects/astrbot_plugin_noreply
 /opt/homebrew/bin/uv sync --locked --group dev
-.venv/bin/python -m pytest -q tests
-.venv/bin/ruff check engine.py main.py tests
+.venv/bin/python -m pytest -q
+.venv/bin/ruff check .
 python3 tools/verify_handoff.py
-python3 research/probe.py
-ASTRBOT_PROBE_SOURCE="$PWD/research/snapshots/deployed-4.29.3/sources" python3 research/probe.py
-ASTRBOT_PROBE_SOURCE="$PWD/research/snapshots/research-master/sources" python3 research/probe.py
 ```
 
-`uv sync` 会下载开发依赖；测试使用假 Provider、假数据库边界和真实 SDK 类型，不启动完整 AstrBot。测试执行阶段拒绝网络套接字连接，SDK 临时数据根目录在测试后清理。
+Python >=3.12，无新增第三方运行依赖。开发 SDK AstrBot 4.29.3 是复现基线，不锁定生产；部署前重新核对实际 SDK。完整测试使用临时 ASTRBOT_ROOT，拒绝网络连接；真实 QQ/模型质量不可由离线测试代替。详见 [状态](docs/IMPLEMENTATION_STATUS.md)、[兼容性](docs/COMPATIBILITY.md)、[Agent 约定](AGENTS.md)。
 
-`.python-version` 将本地复现环境选为 Python 3.12，`uv.lock` 固定开发依赖，含 AstrBot 4.29.3。这是开发环境选择，不改变 Pi 的版本。插件自身不新增第三方运行依赖；标准库探针仍可使用系统 Python 3.9。产品代码要求 Python >=3.12。
-
-## 已定的最小路线
-
-- 独立插件，不修改 AstrBot 核心。
-- 监听白名单群中未被 `@`、唤醒词、命令触发的普通文本；正常对话和私聊保留原链路。
-- 自管有界近期群消息窗口，沉默后仍保留背景。
-- 调用一次 `Context.llm_generate()`，非流式、不开放工具；用明确指定的现有人设。
-- 精确识别独立 `<noreply>`；不把它外发或当成助手发言写入历史。
-- 默认关闭，默认 shadow，空白名单表示任何群都不启用。
-- 先完成离线插件，再 shadow，最后经用户批准在单群 live。
-
-第一版不承诺自主插话自动进入正常 `@` 对话历史；完整上下文桥接单列为后续阶段。
-
-## 原版群上下文屏蔽
-
-插件启用且接管该群时，在内置组件实例的群上下文判断入口安装可撤销拦截：暂停原版缓存/额外群背景注入，不永久改写原版 `group_icl_enable` 等配置。插件停用后按当前原版设置运行，卸载时撤销拦截；不影响私聊、未接管群、正常会话历史或独立数据库群消息记录。正常 `@` 对话也不再收到原版那段额外群背景；插件自身窗口仍只用于自主支路，尚未桥接到普通会话。
-
-运行包必须包含 `native_context.py`。当前 SDK 的内置群上下文入口若改变，日志会明确提示 guard unavailable，需重新验证兼容性。仅调整已有内置组件实例，不修改 AstrBot 核心源码或落盘配置。
-
-## 配置与使用边界
-
-`_conf_schema.json` 中的出厂值为 `enabled=false`、`shadow_mode=true`、`all_groups=false`、`allowed_groups=[]`、`persona_id=""`。必须显式配置现有人设，并选择全群模式或准确群条目；没有模型或人设时不回退到其他模型或人设。
-
-每个白名单条目采用 `平台实例 ID|机器人自身 ID|真实群 ID`，三个字段精确匹配。例如 `test-adapter|test-bot|test-group` 只说明格式，不对应真实群。不支持通配符；默认 `all_groups=false` 时空列表不匹配任何群。显式设置 `all_groups=true` 才开放所有群，不再检查该白名单；仍尊重来源 AI 开关，私聊、显式唤醒和命令不增加自主调用。同群不同发送者共享窗口，即使 AstrBot 的 UMO 按发送者隔离。
-
-| 配置 | 默认值 | 含义 |
-| --- | --- | --- |
-| `all_groups` | false | 显式全群模式；关闭时仅匹配准确白名单 |
-| `window_messages` | 300 | 每群最多保留的观察条数 |
-| `message_chars` | 0 | 可选正文字符上限；0 为不截断 |
-| `context_chars` | 0 | 可选完整 JSON 字符上限；0 为不限制，启用时至少 512 |
-| `attempt_interval` | 10 秒 | 包括沉默和失败的生成尝试间隔 |
-| `reply_cooldown` | 30 秒 | 本地 live 结果交给发送阶段后的发言冷却 |
-| `timeout` | 30 秒 | 模型路由、人设查询与生成的整体截止时间 |
-| `max_reply_chars` | 600 | 可接受回复的字符上限 |
-| `max_groups` | 128 | 群状态容量；满后拒绝新群，不驱逐忙碌任务 |
-
-数值和开关类型不合法时关闭自主插话。修改窗口、容量或时间参数后需重载插件；重载前自主插话关闭并记录提示。开关、shadow、人设或白名单在事件入口及生成返回后重新检查，已观察到的变更使旧结果失效；框架禁用或重载调用 `terminate()` 取消未完成任务。没有后台定时器或逐消息队列，忙时只观察，下一条消息才触发下一次机会。
-
-AstrBot 管理员可在当前群使用 `/noreply_clear` 清空插件窗口并使旧生成失效；命令前缀遵守 AstrBot 的唤醒配置。该命令不输出确认文本，也不调用模型。普通 `/reset` 仍由 AstrBot 处理，会使本插件旧生成失效，但不清空插件窗口，不表示两套历史已经统一。
-
-自主 live 正文在交给本地发送阶段时加入窗口并开始冷却；普通纯文本发送结果通过 `after_message_sent` 观察，每个事件结果去重。两者均不是平台送达证明；发送失败时窗口可能保留本地已提交的正文，插件不重发、不重新请求模型。shadow 假想发言不会加入窗口。
-
-插件默认日志仅包含决策、时延、输出长度、错误类别和固定配置提示，不记录群聊全文、用户 ID、完整响应或密钥。新增诊断开关默认关闭；经明确放行可将实际输入、模型输出正文与决策写入私有 JSONL，见 [诊断记录说明](docs/DIAGNOSTICS.md)。窗口仅驻留内存，重启丢失。Provider 和 AstrBot 自身的日志策略仍由原系统管理。
-
-这条直接生成路径不执行完整 Agent 的工具循环、知识库检索、会话摘要、标准 LLM 请求/响应钩子或全部人设覆盖规则，只使用明确配置的人设系统提示词。
-
-## 版本基线
-
-| 对象 | 基线 |
-| --- | --- |
-| 交接时观测到的部署基线 | AstrBot **4.29.1**，要求 Python **>=3.12**；以后可能更新 |
-| 最近部署核验 | Pi 实际服务为 AstrBot **4.29.3** / Python **3.12.13**；关键源码 hash 与快照一致，见 [M2 记录](docs/M2_TRIAL_2026-10-31.md) |
-| 本地产品验证 | Python **3.12.13**，实际安装的 AstrBot **4.29.3** SDK；不启动服务器 |
-| 首次源码研究 | `3d92821ad9d90df33fc242e7b159a3260075eb2c` |
-| 固定回归探针 | 默认读取交接时保存的 4.29.1 快照，不代表 Pi 当前仍是该版本 |
-
-三组快照保留各自来源和 hash。产品测试同时把适配器接到各组 AST 提取方法上；这只覆盖保存的接口，不等于用完整 4.29.1 框架或所有平台验证了插件。详见 [兼容性记录](docs/COMPATIBILITY.md)。
-
-**兼容性原则：4.29.1 只是已验证的回归基线，不是永久锁定目标。** 实施、部署与升级后均要重新核验实际运行版本及所需 API；优先使用稳定公开接口，不为保持旧基线而降级、锁定或自动升级 Pi。未知版本不能仅凭版本号宣称兼容。
-
-## 仓库内容
-
-```text
-AGENTS.md                 本地 agent 的工作边界
-main.py                   配置、事件、模型/人设查询、发送阶段与生命周期适配
-engine.py                 输出协议、有界观察窗口与生成状态机
-diagnostics.py            默认关闭的私有、有容量上限的逐次诊断记录
-metadata.yaml             插件元数据，无虚构的仓库 URL 或许可证
-_conf_schema.json         AstrBot 配置 schema 与安全默认值
-pyproject.toml / uv.lock  开发依赖与复现锁文件，不随插件运行包安装
-tests/                    产品测试与实际 SDK/快照契约测试
-START_HERE.md             后续接手入口
-ROADMAP.md                实施路线及后续阶段，优先于历史材料
-docs/IMPLEMENTATION_STATUS.md  已执行命令、实现状态与未验证边界
-docs/ACCEPTANCE.md        离线证据与部署待验事项
-docs/COMPATIBILITY.md     实际部署与研究快照的区别
-docs/OPERATIONS.md        部署定位与人工放行边界
-docs/archive/            原研究报告及详细历史路线图
-research/probe.py         可离线复现的 12 项源码接口探针
-research/snapshots/       三组明确区分的只读源码快照及 hash
-research/NOTICE.md        快照来源与第三方许可证说明
-tools/verify_handoff.py   文档路径和源码快照完整性检查
-```
-
-仓库目标为 [678mjoe/astrbot_plugin_noreply](https://github.com/678mjoe/astrbot_plugin_noreply)，由用户创建并授权本次上传；不自动更改可见性或部署。第三方快照保持 AstrBot 原许可证；本插件自身的许可证和公开发布事项暂未决定。
-
-当前离线交付文件清单为 `main.py`、`engine.py`、`diagnostics.py`、`metadata.yaml`、`_conf_schema.json` 和运行说明 README。后续获准部署时可把这六个文件放入同一插件目录；不要复制 `.venv`、开发锁文件、源码快照、缓存、运行配置或聊天数据。M2 的真实模型调用、安装和必要服务操作仍需另行放行。
+运行包包含 `main.py`、`engine.py`、`diagnostics.py`、`native_context.py`、四个 `batch_*.py`、`metadata.yaml`、`_conf_schema.json` 与运行 README。不要打包开发环境、快照、运行配置、SQLite 或真实聊天记录。仓库为 [678mjoe/astrbot_plugin_noreply](https://github.com/678mjoe/astrbot_plugin_noreply)；后续推送仍需相应授权。

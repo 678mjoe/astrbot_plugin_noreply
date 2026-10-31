@@ -34,6 +34,7 @@ def event(text="hello", *, mid="m1", sender="user", group="group", session="grou
 def configured(**overrides):
     return {
         "enabled": True,
+        "batch_mode": False,
         "shadow_mode": False,
         "allowed_groups": ["adapter|bot|group"],
         "persona_id": "chosen-persona",

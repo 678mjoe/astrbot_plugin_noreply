@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import math
+import sqlite3
 import time
 import traceback
 import uuid
@@ -18,6 +21,10 @@ from astrbot.api.star import Context, Star, StarTools
 from astrbot.core.platform.message_type import MessageType
 from astrbot.core.provider.entities import LLMResponse
 
+from .batch_protocol import BATCH_PROTOCOL, InvalidBatch
+from .batch_runner import BatchOptions, BatchRunner
+from .batch_store import BatchStore
+from .batch_transport import describe_transport, send_plain
 from .diagnostics import Recorder
 from .engine import (
     Engine,
@@ -59,15 +66,19 @@ class Settings:
     limits: Limits = Limits()
     diagnostics_enabled: bool = False
     all_groups: bool = False
+    batch_mode: bool = True
+    batch_size: int = 32
+    batch_retry_base: float = 5.0
 
     @classmethod
     def read(cls, config: Mapping[str, ConfigValue]) -> Settings:
         enabled, shadow = config.get("enabled", False), config.get("shadow_mode", True)
         diagnostics = config.get("diagnostics_enabled", False)
         all_groups = config.get("all_groups", False)
+        batch_mode = config.get("batch_mode", True)
         if any(
             type(value) is not bool
-            for value in (enabled, shadow, diagnostics, all_groups)
+            for value in (enabled, shadow, diagnostics, all_groups, batch_mode)
         ):
             raise ConfigError("switch")
         persona_id = config.get("persona_id", "")
@@ -103,6 +114,16 @@ class Settings:
             if type(value) not in (int, float):
                 raise ConfigError(name)
             numbers[name] = float(value)
+        batch_size = config.get("batch_size", 32)
+        retry = config.get("batch_retry_base", 5.0)
+        if type(batch_size) is not int or not 1 <= batch_size <= 128:
+            raise ConfigError("batch_size")
+        if (
+            type(retry) not in (int, float)
+            or not math.isfinite(retry)
+            or not 0 < retry <= 60
+        ):
+            raise ConfigError("batch_retry_base")
         return cls(
             enabled,
             shadow,
@@ -111,6 +132,9 @@ class Settings:
             Limits(**integers, **numbers),
             diagnostics,
             all_groups,
+            batch_mode,
+            batch_size,
+            float(retry),
         )
 
 
@@ -121,6 +145,7 @@ class NoReplyPlugin(Star):
         self.settings = self._read_settings()
         self.engine = Engine(self.settings.limits)
         self._recorder: Recorder | None = None
+        self._batch_runner: BatchRunner | None = None
         self._native_context_gate: NativeContextGate | None = None
         self._native_context_closed = False
         self._compatible = all(
@@ -139,7 +164,7 @@ class NoReplyPlugin(Star):
         if self._native_context_closed:
             return False
         settings = self._refresh_settings()
-        key = self._key(event)
+        key = self._batch_key(event) if settings.batch_mode else self._key(event)
         return (
             key is not None
             and bool(settings.persona_id)
@@ -171,6 +196,18 @@ class NoReplyPlugin(Star):
 
     async def initialize(self) -> None:
         self._install_native_context_gate()
+        if self.settings.batch_mode and self._compatible:
+            try:
+                self._ensure_batch()
+            except (OSError, sqlite3.Error, ValueError):
+                self._native_context_closed = True
+                if self._native_context_gate is not None:
+                    self._native_context_gate.restore()
+                    self._native_context_gate = None
+                self.logger.error(
+                    "noreply batch ledger unavailable; plugin initialization aborted"
+                )
+                raise
 
     @filter.on_astrbot_loaded()
     async def on_native_context_ready(self) -> None:
@@ -193,6 +230,8 @@ class NoReplyPlugin(Star):
         current = self._read_settings()
         if current != self.settings:
             self.engine.invalidate_all()
+            if self._batch_runner is not None:
+                self._batch_runner.invalidate()
             self.settings = current
             if current.limits != self.engine.limits:
                 self.logger.warning(
@@ -228,8 +267,12 @@ class NoReplyPlugin(Star):
     def _allowed(
         self, event: AstrMessageEvent, key: GroupKey, settings: Settings
     ) -> bool:
+        return self._allowed_origin(event.unified_msg_origin, key, settings)
+
+    def _allowed_origin(self, origin: str, key: GroupKey, settings: Settings) -> bool:
         if (
-            not self._compatible
+            self._native_context_closed
+            or not self._compatible
             or not settings.enabled
             or (not settings.all_groups and key not in settings.allowed_groups)
             or settings.limits != self.engine.limits
@@ -238,13 +281,30 @@ class NoReplyPlugin(Star):
         # A source can use a different AstrBot configuration; preserve its raw UMO.
         try:
             return (
-                self.context.get_config(event.unified_msg_origin)["provider_settings"][
-                    "enable"
-                ]
-                is True
+                self.context.get_config(origin)["provider_settings"]["enable"] is True
             )
         except (AttributeError, KeyError, TypeError):
             self.logger.warning("noreply disabled: source AI configuration unavailable")
+            return False
+
+    @staticmethod
+    def _is_local_sender(event: AstrMessageEvent) -> bool:
+        if event.get_sender_id() == event.get_self_id():
+            return True
+        try:
+            raw = event.message_obj.raw_message
+            author = (
+                raw.get("author")
+                if isinstance(raw, Mapping)
+                else getattr(raw, "author", None)
+            )
+            flag = (
+                author.get("is_you")
+                if isinstance(author, Mapping)
+                else getattr(author, "is_you", None)
+            )
+            return flag is True
+        except Exception:
             return False
 
     @staticmethod
@@ -299,11 +359,20 @@ class NoReplyPlugin(Star):
         snapshot: tuple[Message, ...],
         trace_id: str = "",
     ) -> ModelOutput:
+        return await self._request_model(
+            event.unified_msg_origin,
+            settings,
+            serialize_snapshot(snapshot),
+            PROTOCOL,
+            trace_id,
+        )
+
+    async def _request_model(
+        self, origin, settings, prompt, protocol, trace_id
+    ) -> ModelOutput:
         stage = "provider_lookup"
         try:
-            provider_id = await self.context.get_current_chat_provider_id(
-                umo=event.unified_msg_origin
-            )
+            provider_id = await self.context.get_current_chat_provider_id(umo=origin)
             if not provider_id or not settings.persona_id:
                 return ModelOutput("invalid", None)
             stage = "persona_lookup"
@@ -317,8 +386,8 @@ class NoReplyPlugin(Star):
                 return ModelOutput("invalid", None)
             request = dict(
                 chat_provider_id=provider_id,
-                system_prompt=persona.system_prompt + "\n\n" + PROTOCOL,
-                prompt=serialize_snapshot(snapshot),
+                system_prompt=persona.system_prompt + "\n\n" + protocol,
+                prompt=prompt,
                 contexts=[],
                 tools=None,
                 request_max_retries=0,
@@ -380,16 +449,187 @@ class NoReplyPlugin(Star):
             )
             raise
 
+    def _batch_key(self, event: AstrMessageEvent) -> GroupKey | None:
+        key = self._key(event)
+        # QQ uses an AppID for @ events but a sentinel for unwoken events.
+        # The adapter instance already separates bot accounts.
+        if key is not None and event.get_platform_name() == "qq_official":
+            return GroupKey(key.platform_id, "qq_official", key.group_id)
+        return key
+
+    def _batch_allowed(self, room) -> bool:
+        settings = self._refresh_settings()
+        return (
+            settings.batch_mode
+            and bool(settings.persona_id)
+            and self._allowed_origin(room["origin"], room["key"], settings)
+        )
+
+    def _batch_options(self) -> BatchOptions:
+        settings = self._refresh_settings()
+        limits = settings.limits
+        return BatchOptions(
+            batch_size=settings.batch_size,
+            attempt_interval=limits.attempt_interval,
+            reply_cooldown=limits.reply_cooldown,
+            timeout=limits.timeout,
+            retry_base=settings.batch_retry_base,
+            max_workers=limits.max_groups,
+            max_reply_chars=limits.max_reply_chars,
+            window_messages=limits.window_messages,
+            shadow=settings.shadow_mode,
+            policy=settings,
+        )
+
+    def _batch_log(self, state, room, detail):
+        digest = hashlib.sha256(room.encode()).hexdigest()[:12] if room else "-"
+        self.logger.info(
+            "noreply batch state=%s room=%s detail=%s", state, digest, detail
+        )
+
+    def _ensure_batch(self) -> BatchRunner:
+        if self._batch_runner is None:
+            store = BatchStore(
+                StarTools.get_data_dir("astrbot_plugin_noreply") / "batch",
+                window=self.settings.limits.window_messages,
+            )
+            self._batch_runner = BatchRunner(
+                store,
+                self._generate_batch,
+                lambda room, item: send_plain(self.context, room, item),
+                self._batch_allowed,
+                self._batch_options,
+                log=self._batch_log,
+            )
+            self._batch_runner.start()
+            counts = store.counts()
+            self.logger.info(
+                "noreply batch ledger ready received=%d pending=%d judged=%d unknown=%d",
+                counts["received"],
+                counts["pending"],
+                counts["judged"],
+                counts["unknown"],
+            )
+        return self._batch_runner
+
+    async def _generate_batch(self, room, pending, background) -> ModelOutput:
+        if not self._batch_allowed(room):
+            return ModelOutput("invalid", None)
+        settings = self._refresh_settings()
+        limit = settings.limits
+
+        def bounded(records):
+            return [
+                {
+                    **row,
+                    "text": row["text"][: limit.message_chars]
+                    if limit.message_chars
+                    else row["text"],
+                }
+                for row in records
+            ]
+
+        payload = {"background": bounded(background), "pending": bounded(pending)}
+
+        def serialize():
+            return json.dumps(
+                payload, ensure_ascii=False, allow_nan=False, separators=(",", ":")
+            )
+
+        prompt = serialize()
+        if limit.context_chars:
+            while len(prompt) > limit.context_chars and payload["background"]:
+                payload["background"].pop(0)
+                prompt = serialize()
+            if len(prompt) > limit.context_chars:
+                raise InvalidBatch("pending_budget_exceeded")
+        trace = uuid.uuid4().hex
+        return await self._request_model(
+            room["origin"],
+            settings,
+            prompt,
+            BATCH_PROTOCOL
+            + f" Maximum reply text length per decision: {limit.max_reply_chars} characters.",
+            trace,
+        )
+
+    def _on_batch_message(self, event, key, settings):
+        explicit = self._explicit(event)
+        if explicit and self._batch_runner is not None:
+            self._batch_runner.invalidate(self._batch_runner.store.key(key))
+        components = event.get_messages()
+        if not components or not all(isinstance(part, Plain) for part in components):
+            return
+        text = "".join(part.text for part in components).strip()
+        if not text:
+            return
+        is_bot, is_admin = self._sender_flags(event)
+        message_id = getattr(event.message_obj, "message_id", "")
+        message = Message(
+            "user",
+            event.get_sender_id(),
+            event.get_sender_name(),
+            float(event.message_obj.timestamp),
+            message_id if isinstance(message_id, str) else "",
+            text,
+            is_bot=is_bot,
+            is_admin=is_admin,
+        )
+        runner = self._ensure_batch()
+        transport = describe_transport(event)
+        if explicit:
+            runner.store.observe(key, event.unified_msg_origin, transport, message)
+            return
+        id = runner.enqueue(key, event.unified_msg_origin, transport, message)
+        if id is not None:
+            self._batch_log("queued", runner.store.key(key), str(id))
+            self._record(
+                "incoming",
+                uuid.uuid4().hex,
+                queue_id=id,
+                umo=event.unified_msg_origin,
+                sender_id=message.sender_id,
+                display_name=message.display_name,
+                message_id=message.message_id,
+                text=text,
+                is_bot=is_bot,
+                is_admin=is_admin,
+            )
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("noreply_status")
+    async def batch_status(self, event: AstrMessageEvent):
+        settings = self._refresh_settings()
+        key = self._batch_key(event)
+        if key is not None and event.is_admin() and settings.batch_mode:
+            runner = self._ensure_batch()
+            counts = runner.store.counts(runner.store.key(key))
+            yield event.plain_result(
+                "NoReply "
+                + " ".join(f"{name}={value}" for name, value in counts.items())
+            )
+
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE, priority=100)
     async def on_group_message(
         self, event: AstrMessageEvent
     ) -> AsyncIterator[MessageEventResult]:
         settings = self._refresh_settings()
-        key = self._key(event)
-        if key is None or event.get_sender_id() == event.get_self_id():
+        key = self._batch_key(event) if settings.batch_mode else self._key(event)
+        if key is None or self._is_local_sender(event):
             return
         if not self._allowed(event, key, settings):
             self.engine.invalidate(key)
+            if self._batch_runner is not None:
+                self._batch_runner.invalidate(self._batch_runner.store.key(key))
+            return
+        if settings.batch_mode:
+            try:
+                self._on_batch_message(event, key, settings)
+            except (OSError, sqlite3.Error, ValueError) as exc:
+                self.logger.error(
+                    "noreply batch ingest_failed category=%s; message NOT durably accepted",
+                    type(exc).__name__,
+                )
             return
         explicit = self._explicit(event)
         if explicit:
@@ -481,14 +721,20 @@ class NoReplyPlugin(Star):
     @filter.command("noreply_clear")
     async def clear_memory(self, event: AstrMessageEvent) -> None:
         """Clear this physical group's plugin memory (AstrBot administrators only)."""
-        key = self._key(event)
+        settings = self._refresh_settings()
+        key = self._batch_key(event) if settings.batch_mode else self._key(event)
         if key is not None and event.is_admin():
             self.engine.invalidate(key, clear=True)
+            if self._batch_runner is not None:
+                self._batch_runner.invalidate(
+                    self._batch_runner.store.key(key), clear=True
+                )
 
     @filter.after_message_sent()
     async def after_sent(self, event: AstrMessageEvent) -> None:
         """Observe local normal text results; the hook is not a delivery receipt."""
-        key, settings = self._key(event), self._refresh_settings()
+        settings = self._refresh_settings()
+        key = self._batch_key(event) if settings.batch_mode else self._key(event)
         if (
             key is None
             or event.get_extra("noreply_local_result", False)
@@ -507,6 +753,24 @@ class NoReplyPlugin(Star):
         if event.get_extra("noreply_observed_result") == digest:
             return
         event.set_extra("noreply_observed_result", digest)
+        if settings.batch_mode:
+            runner = self._ensure_batch()
+            runner.store.observe(
+                key,
+                event.unified_msg_origin,
+                describe_transport(event),
+                Message(
+                    "assistant",
+                    key.self_id,
+                    "bot",
+                    time.time(),
+                    "observed:" + uuid.uuid4().hex,
+                    text,
+                    is_bot=True,
+                    is_admin=None,
+                ),
+            )
+            return
         self.engine.observe(
             key,
             Message(
@@ -526,4 +790,8 @@ class NoReplyPlugin(Star):
         if self._native_context_gate is not None:
             self._native_context_gate.restore()
             self._native_context_gate = None
+        if self._batch_runner is not None:
+            await self._batch_runner.close()
+            self._batch_runner.store.close()
+            self._batch_runner = None
         await self.engine.close()

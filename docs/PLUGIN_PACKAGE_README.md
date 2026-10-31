@@ -1,19 +1,25 @@
-# AstrBot NoReply — 运行包
+# NoReply 运行包
 
-这是 v0.1.0 的最小运行文件包，不含开发依赖、真实群配置、聊天内容或密钥。插件需要 Python >=3.12；当前已离线验证的 SDK 为 AstrBot 4.29.3，部署前仍应核实实际接口。
+本包使用持久化逐消息批量判定；默认 batch_mode=true、每批最多 32 条、最近背景 300 条、字符 caps 默认 0。每条 pending 都必须获得合法回复/不回复结果，busy/cooldown 不会丢待判，也不会等新消息才补判。
 
-安装后出厂关闭：enabled=false、shadow_mode=true、all_groups=false、allowed_groups=[]、persona_id=""。默认空白名单不匹配任何群；显式 all_groups=true 才开启全群模式。白名单采用平台实例ID|机器人自身ID|真实群ID，不能用普通群号替代平台的群 OpenID。
+## 安全开关
 
-先在明确许可的单群限时 shadow：仍会调用模型，但不会发送正文；精确独立的 <noreply> 表示沉默。只有用户许可的 live 才能向群提交纯文本。插件不提供工具循环、不统一正常会话历史，观察窗口重启丢失。
+出厂 enabled=false、shadow_mode=true、all_groups=false、allowed_groups=[]。配置明确的现有人设后才能生成。空白名单不代表全群；全群使用显式 all_groups=true。维护现有部署时保留用户已批准的 live/全群模式，不自动改回限时试验。diagnostics_enabled 默认 false。
 
-运行包必须同时包含 main.py、engine.py、diagnostics.py、native_context.py、metadata.yaml、_conf_schema.json 和 README.md。插件接管群时自动屏蔽原版群上下文缓存/注入，不改原设置，停用或卸载后恢复。普通会话历史保留，但插件窗口尚未桥接到正常 @ 路径。
+仅接管未显式唤醒的普通纯文本群消息，来源 AI 必须开启。私聊、正常 @、命令及混合组件不加入自主待判。is_admin 指 AstrBot 后台管理员，不是群管理员；is_bot 为平台标记，unknown 保留 null。QQ 白名单的 bot 字段采用 qq_official，以统一 @/未 @ 的群键。
 
-修改窗口、容量或时间限制后需重载插件。AstrBot 管理员可用 /noreply_clear 清空本群插件记忆；命令前缀遵守框架配置。
+## 文件
 
-运行日志只记录决策、时延、长度、错误类别。插件的本地发送观察不证明平台实际送达，发送失败不重试。
+放入同一插件目录：main.py、engine.py、diagnostics.py、native_context.py、batch_protocol.py、batch_store.py、batch_runner.py、batch_transport.py、metadata.yaml、_conf_schema.json、README.md。要求 Python >=3.12，无新增第三方运行依赖。SDK 升级后重新验证 API，不永久锁定旧部署版本。
 
-QQ 官方机器人需在目标群获准“接收所有消息”，否则不能以未 @ 的普通聊天触发自主评估。安装加载、真实模型协议与平台送达是不同验收项，不互相替代。
+## 数据与恢复
 
-可选 diagnostics_enabled 默认关闭。获准后可在私有 JSONL 中记录实际输入、系统提示词、模型正文、决策及异常阶段；真实记录不应上传仓库。目录权限 0700、文件 0600，单文件上限 2 MiB。诊断写入失败时跳过未记录的评估/发送。
+队列在插件数据根的 batch/queue.sqlite3（目录 0700、DB 0600），不在代码目录。待判、合法结论与发送状态分别落盘。重启自动续判；未判不随 300 条背景淘汰。队列含真实正文，禁止入库/公开；关闭完整诊断不会关闭必要队列持久化。覆盖/去重元数据不自动删除，需监控磁盘。
 
-最多保留 5 份诊断文件，达到上限后拒绝新记录并暂停无法留档的评估；旧记录不会被静默删除，请先导出归档。
+QQ 官方异步发送使用当前客户端群消息 API，有返回消息 ID 才记 API 确认，并非终端已读。发送中断/超时记 unknown，不自动重复；unknown 或更早未判项会阻止该群后续越序发送。其他平台的 handed_off 仅代表 SDK 派发。
+
+AstrBot 管理员在群内可用 /noreply_status 查看 received/pending/judged/cancelled/send_pending/accepted/unknown。/noreply_clear 清空旧背景、取消待判和排队发言，并明确放弃 unknown 以解除阻塞；不会补认送达、重发旧正文或撤回已送消息。
+
+## 边界
+
+正常 Agent 历史桥接未实现；原版额外群背景通过可撤销 guard 屏蔽，不改原版配置。自主支路不执行完整 Agent/常规发送后 hook。失败会保留并重试待判，但不保证外部模型永久失败、平台拒绝或磁盘不可写时有限时间内完成。旧快照算法遗留消息不可凭空恢复。batch_mode=false 为旧兼容路径，不再有逐条覆盖保证。

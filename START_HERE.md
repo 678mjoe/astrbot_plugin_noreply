@@ -1,5 +1,7 @@
 # 本地接手入口
 
+> 当前主路径已实现持久化逐消息批量判定，用户已批准全群正式 live；请先读 [批量设计](docs/BATCH_JUDGMENTS.md) 和 [当前状态](docs/IMPLEMENTATION_STATUS.md)。下文旧 M1/M2 单群试验与未部署描述为历史路线，不代表当前开关。正常 Agent 历史桥接仍未实现。
+
 M1 离线实现已经完成；M2 已有一次成功自主生成的 shadow 样本，但因内置主动回复竞争尚未验收通过。先读 `docs/M2_TRIAL_2026-10-31.md` 与 `docs/CONTEXT_DESIGN.md`，再阅读 `AGENTS.md`、`README.md`、
 `docs/IMPLEMENTATION_STATUS.md`、`docs/ACCEPTANCE.md` 和
 `docs/COMPATIBILITY.md`，了解实际证据与部署边界。

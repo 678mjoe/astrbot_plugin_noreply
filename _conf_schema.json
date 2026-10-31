@@ -35,7 +35,7 @@
     "default": 0
   },
   "context_chars": {
-    "description": "Maximum serialized background characters; 0 disables this cap, otherwise minimum 512",
+    "description": "Maximum serialized batch prompt characters; 0 disables. Drop old background first, never silently drop pending IDs; oversize pending batches are retried smaller.",
     "type": "int",
     "default": 0
   },
@@ -60,7 +60,7 @@
     "default": 600
   },
   "max_groups": {
-    "description": "Maximum in-memory physical groups; excess groups fail closed",
+    "description": "Maximum concurrent physical group workers in batch mode; additional rooms stay durably queued",
     "type": "int",
     "default": 128
   },
@@ -68,5 +68,20 @@
     "description": "Opt-in private JSONL of evaluated inputs, prompts, model reply text and decisions. Disable after the trial; do not publish records.",
     "type": "bool",
     "default": false
+  },
+  "batch_mode": {
+    "description": "Use durable per-message batch judgments; false selects the legacy non-covering snapshot algorithm",
+    "type": "bool",
+    "default": true
+  },
+  "batch_size": {
+    "description": "Maximum pending messages per model request (1–128); invalid responses halve the retry batch",
+    "type": "int",
+    "default": 32
+  },
+  "batch_retry_base": {
+    "description": "Initial retry delay in seconds (0–60 exclusive of zero), exponential up to 60 seconds",
+    "type": "float",
+    "default": 5.0
   }
 }
