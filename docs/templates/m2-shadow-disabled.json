@@ -10,5 +10,6 @@
   "reply_cooldown": 60.0,
   "timeout": 30.0,
   "max_reply_chars": 600,
-  "max_groups": 1
+  "max_groups": 1,
+  "diagnostics_enabled": false
 }

@@ -58,7 +58,7 @@ AstrBot 管理员可在当前群使用 `/noreply_clear` 清空插件窗口并使
 
 自主 live 正文在交给本地发送阶段时加入窗口并开始冷却；普通纯文本发送结果通过 `after_message_sent` 观察，每个事件结果去重。两者均不是平台送达证明；发送失败时窗口可能保留本地已提交的正文，插件不重发、不重新请求模型。shadow 假想发言不会加入窗口。
 
-插件新增日志仅包含决策、时延、输出长度、错误类别和固定配置提示，不记录群聊全文、用户 ID、完整响应或密钥。窗口仅驻留内存，重启丢失。Provider 和 AstrBot 自身的日志策略仍由原系统管理。
+插件默认日志仅包含决策、时延、输出长度、错误类别和固定配置提示，不记录群聊全文、用户 ID、完整响应或密钥。新增诊断开关默认关闭；经明确放行可将实际输入、模型输出正文与决策写入私有 JSONL，见 [诊断记录说明](docs/DIAGNOSTICS.md)。窗口仅驻留内存，重启丢失。Provider 和 AstrBot 自身的日志策略仍由原系统管理。
 
 这条直接生成路径不执行完整 Agent 的工具循环、知识库检索、会话摘要、标准 LLM 请求/响应钩子或全部人设覆盖规则，只使用明确配置的人设系统提示词。
 
@@ -82,6 +82,7 @@ AstrBot 管理员可在当前群使用 `/noreply_clear` 清空插件窗口并使
 AGENTS.md                 本地 agent 的工作边界
 main.py                   配置、事件、模型/人设查询、发送阶段与生命周期适配
 engine.py                 输出协议、有界观察窗口与生成状态机
+diagnostics.py            默认关闭的私有、有容量上限的逐次诊断记录
 metadata.yaml             插件元数据，无虚构的仓库 URL 或许可证
 _conf_schema.json         AstrBot 配置 schema 与安全默认值
 pyproject.toml / uv.lock  开发依赖与复现锁文件，不随插件运行包安装
@@ -101,4 +102,4 @@ tools/verify_handoff.py   文档路径和源码快照完整性检查
 
 仓库目标为 [678mjoe/astrbot_plugin_noreply](https://github.com/678mjoe/astrbot_plugin_noreply)，由用户创建并授权本次上传；不自动更改可见性或部署。第三方快照保持 AstrBot 原许可证；本插件自身的许可证和公开发布事项暂未决定。
 
-离线交付文件清单为 `main.py`、`engine.py`、`metadata.yaml`、`_conf_schema.json` 和本 README。后续获准部署时可把这五个文件放入同一插件目录；不要复制 `.venv`、开发锁文件、源码快照、缓存、运行配置或聊天数据。M2 的真实模型调用、安装和必要服务操作仍需另行放行。
+当前离线交付文件清单为 `main.py`、`engine.py`、`diagnostics.py`、`metadata.yaml`、`_conf_schema.json` 和运行说明 README。后续获准部署时可把这六个文件放入同一插件目录；不要复制 `.venv`、开发锁文件、源码快照、缓存、运行配置或聊天数据。M2 的真实模型调用、安装和必要服务操作仍需另行放行。

@@ -4,18 +4,21 @@ from __future__ import annotations
 
 import hashlib
 import time
+import traceback
 import uuid
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Final
 
 from astrbot.api import AstrBotConfig
 from astrbot.api.event import AstrMessageEvent, MessageEventResult, filter
 from astrbot.api.message_components import At, AtAll, Plain
-from astrbot.api.star import Context, Star
+from astrbot.api.star import Context, Star, StarTools
 from astrbot.core.platform.message_type import MessageType
 from astrbot.core.provider.entities import LLMResponse
 
+from .diagnostics import Recorder
 from .engine import (
     Engine,
     GroupKey,
@@ -53,11 +56,13 @@ class Settings:
     allowed_groups: frozenset[GroupKey] = frozenset()
     persona_id: str = ""
     limits: Limits = Limits()
+    diagnostics_enabled: bool = False
 
     @classmethod
     def read(cls, config: Mapping[str, ConfigValue]) -> Settings:
         enabled, shadow = config.get("enabled", False), config.get("shadow_mode", True)
-        if type(enabled) is not bool or type(shadow) is not bool:
+        diagnostics = config.get("diagnostics_enabled", False)
+        if any(type(value) is not bool for value in (enabled, shadow, diagnostics)):
             raise ConfigError("switch")
         persona_id = config.get("persona_id", "")
         entries = config.get("allowed_groups", [])
@@ -98,6 +103,7 @@ class Settings:
             frozenset(groups),
             persona_id.strip(),
             Limits(**integers, **numbers),
+            diagnostics,
         )
 
 
@@ -107,6 +113,7 @@ class NoReplyPlugin(Star):
         self.config = config
         self.settings = self._read_settings()
         self.engine = Engine(self.settings.limits)
+        self._recorder: Recorder | None = None
         self._compatible = all(
             callable(method)
             for method in (
@@ -136,6 +143,22 @@ class NoReplyPlugin(Star):
                     "noreply disabled: reload plugin to apply changed limits"
                 )
         return current
+
+    def _record(self, kind: str, event_id: str, **fields) -> bool:
+        if self.config.get("diagnostics_enabled", False) is not True:
+            return True
+        if self.config.get("enabled", False) is not True:
+            return True
+        try:
+            if self._recorder is None:
+                self._recorder = Recorder(
+                    StarTools.get_data_dir("astrbot_plugin_noreply")
+                )
+            self._recorder.write(kind, event_id, **fields)
+            return True
+        except (OSError, ValueError, TypeError, RuntimeError):
+            self.logger.error("noreply diagnostic unavailable; evaluation/send skipped")
+            return False
 
     @staticmethod
     def _key(event: AstrMessageEvent) -> GroupKey | None:
@@ -186,45 +209,88 @@ class NoReplyPlugin(Star):
         event: AstrMessageEvent,
         settings: Settings,
         snapshot: tuple[Message, ...],
+        trace_id: str = "",
     ) -> ModelOutput:
-        provider_id = await self.context.get_current_chat_provider_id(
-            umo=event.unified_msg_origin
-        )
-        if not provider_id or not settings.persona_id:
-            return ModelOutput("invalid", None)
-        persona = await self.context.persona_manager.get_persona(settings.persona_id)
-        if (
-            not isinstance(persona.system_prompt, str)
-            or not persona.system_prompt.strip()
-        ):
-            return ModelOutput("invalid", None)
-        response = await self.context.llm_generate(
-            chat_provider_id=provider_id,
-            system_prompt=persona.system_prompt + "\n\n" + PROTOCOL,
-            prompt=serialize_snapshot(snapshot),
-            contexts=[],
-            tools=None,
-            request_max_retries=0,
-        )
-        if not isinstance(response, LLMResponse):
-            return ModelOutput("invalid", None)
-        nontext = response.result_chain is not None and any(
-            not isinstance(part, Plain) for part in response.result_chain.chain
-        )
-        return ModelOutput(
-            response.role,
-            response.completion_text
-            if isinstance(response.completion_text, str)
-            else None,
-            bool(
-                response.tools_call_args
-                or response.tools_call_name
-                or response.tools_call_ids
-                or response.tools_call_extra_content
-                or response.is_chunk
-                or nontext
-            ),
-        )
+        stage = "provider_lookup"
+        try:
+            provider_id = await self.context.get_current_chat_provider_id(
+                umo=event.unified_msg_origin
+            )
+            if not provider_id or not settings.persona_id:
+                return ModelOutput("invalid", None)
+            stage = "persona_lookup"
+            persona = await self.context.persona_manager.get_persona(
+                settings.persona_id
+            )
+            if (
+                not isinstance(persona.system_prompt, str)
+                or not persona.system_prompt.strip()
+            ):
+                return ModelOutput("invalid", None)
+            request = dict(
+                chat_provider_id=provider_id,
+                system_prompt=persona.system_prompt + "\n\n" + PROTOCOL,
+                prompt=serialize_snapshot(snapshot),
+                contexts=[],
+                tools=None,
+                request_max_retries=0,
+            )
+            if not self._record("request", trace_id, **request):
+                raise RuntimeError("Diagnostic recording unavailable")
+            stage = "model_call"
+            response = await self.context.llm_generate(**request)
+            if not self._record(
+                "response",
+                trace_id,
+                response_type=type(response).__name__,
+                role=response.role if isinstance(response, LLMResponse) else None,
+                completion_text=response.completion_text
+                if isinstance(response, LLMResponse) and response.role == "assistant"
+                else None,
+            ):
+                raise RuntimeError("Diagnostic recording unavailable")
+            if not isinstance(response, LLMResponse):
+                return ModelOutput("invalid", None)
+            nontext = response.result_chain is not None and any(
+                not isinstance(part, Plain) for part in response.result_chain.chain
+            )
+            return ModelOutput(
+                response.role,
+                response.completion_text
+                if isinstance(response.completion_text, str)
+                else None,
+                bool(
+                    response.tools_call_args
+                    or response.tools_call_name
+                    or response.tools_call_ids
+                    or response.tools_call_extra_content
+                    or response.is_chunk
+                    or nontext
+                ),
+            )
+
+        except Exception as exc:
+            status = getattr(exc, "status_code", None)
+            self._record(
+                "error",
+                trace_id,
+                stage=stage,
+                exception_type=type(exc).__name__,
+                category="provider_safety_block"
+                if stage == "model_call"
+                and "failed Gemini platform safety checks" in str(exc)
+                else "exception",
+                http_status=status if type(status) is int else None,
+                frames=[
+                    {
+                        "file": Path(frame.filename).name,
+                        "line": frame.lineno,
+                        "function": frame.name,
+                    }
+                    for frame in traceback.extract_tb(exc.__traceback__)
+                ],
+            )
+            raise
 
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE, priority=100)
     async def on_group_message(
@@ -245,6 +311,18 @@ class NoReplyPlugin(Star):
             return
         text = "".join(part.text for part in components).strip()
         message_id = getattr(event.message_obj, "message_id", "")
+        trace_id = uuid.uuid4().hex
+        if not self._record(
+            "incoming",
+            trace_id,
+            umo=event.unified_msg_origin,
+            sender_id=event.get_sender_id(),
+            display_name=event.get_sender_name(),
+            message_id=message_id,
+            text=text,
+            plain_parts=[part.text for part in components],
+        ):
+            return
         accepted = self.engine.observe(
             key,
             Message(
@@ -260,7 +338,7 @@ class NoReplyPlugin(Star):
             return
 
         async def generate(snapshot: tuple[Message, ...]) -> ModelOutput:
-            return await self._generate(event, settings, snapshot)
+            return await self._generate(event, settings, snapshot, trace_id)
 
         started = time.monotonic()
         outcome = await self.engine.attempt(key, generate, shadow=settings.shadow_mode)
@@ -271,6 +349,15 @@ class NoReplyPlugin(Star):
             len(outcome.text),
             outcome.error_category or "-",
         )
+        if not self._record(
+            "decision",
+            trace_id,
+            status=outcome.status,
+            text=outcome.text,
+            error_category=outcome.error_category,
+            latency_s=max(0.0, time.monotonic() - started),
+        ):
+            return
         current = self._refresh_settings()
         if (
             current != settings

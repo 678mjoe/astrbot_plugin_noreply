@@ -58,5 +58,10 @@
     "description": "Maximum in-memory physical groups; excess groups fail closed",
     "type": "int",
     "default": 128
+  },
+  "diagnostics_enabled": {
+    "description": "Opt-in private JSONL of evaluated inputs, prompts, model reply text and decisions. Disable after the trial; do not publish records.",
+    "type": "bool",
+    "default": false
   }
 }
