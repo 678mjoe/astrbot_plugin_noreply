@@ -3,6 +3,7 @@
 本目录保存用于 AST 隔离探针的 AstrBot 原始源码，不是可运行的完整 AstrBot，也不是本插件的实现。
 
 - `snapshots/deployed-4.29.1`：从 Pi 安装的 AstrBot 4.29.1 包只读复制；用 SHA-256 验证。
+- `snapshots/deployed-4.29.3`：用户授权升级后的 Pi 发行包快照；保留旧快照，用独立 SHA-256 验证。
 - `snapshots/research-master`：固定上游提交 `3d92821ad9d90df33fc242e7b159a3260075eb2c`；用 Git blob SHA-1 验证。
 - `probe.py`：提取四个实际方法，使用外部 API 桩验证 12 项控制流；不 import 完整框架，不发送网络请求。
 

@@ -1,0 +1,62 @@
+{
+  "enabled": {
+    "description": "Enable autonomous group evaluation",
+    "type": "bool",
+    "default": false
+  },
+  "shadow_mode": {
+    "description": "Evaluate without sending replies (still calls the model)",
+    "type": "bool",
+    "default": true
+  },
+  "allowed_groups": {
+    "description": "Exact platform_id|bot_id|group_id entries; empty enables no groups",
+    "type": "list",
+    "default": []
+  },
+  "persona_id": {
+    "description": "Existing persona ID; required, no fallback",
+    "type": "string",
+    "default": ""
+  },
+  "window_messages": {
+    "description": "Maximum observations per physical group",
+    "type": "int",
+    "default": 40
+  },
+  "message_chars": {
+    "description": "Maximum characters per observation",
+    "type": "int",
+    "default": 500
+  },
+  "context_chars": {
+    "description": "Maximum serialized background characters (minimum 512)",
+    "type": "int",
+    "default": 12000
+  },
+  "attempt_interval": {
+    "description": "Minimum seconds between attempts, including silence and errors",
+    "type": "float",
+    "default": 10.0
+  },
+  "reply_cooldown": {
+    "description": "Minimum seconds between local live replies",
+    "type": "float",
+    "default": 30.0
+  },
+  "timeout": {
+    "description": "Total seconds for provider lookup, persona lookup and generation",
+    "type": "float",
+    "default": 30.0
+  },
+  "max_reply_chars": {
+    "description": "Maximum accepted reply characters",
+    "type": "int",
+    "default": 600
+  },
+  "max_groups": {
+    "description": "Maximum in-memory physical groups; excess groups fail closed",
+    "type": "int",
+    "default": 128
+  }
+}

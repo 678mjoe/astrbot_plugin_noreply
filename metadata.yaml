@@ -1,0 +1,5 @@
+name: astrbot_plugin_noreply
+display_name: AstrBot NoReply
+desc: Context-aware text replies or silence in explicitly allowed groups.
+version: v0.1.0
+author: M.Joe

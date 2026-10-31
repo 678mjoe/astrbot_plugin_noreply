@@ -1,7 +1,26 @@
-# 给本地 agent 的启动提示词
+# 本地接手入口
 
-在 `~/projects/astrbot_plugin_noreply` 打开项目后，可直接发送：
+M1 离线实现已经完成。先阅读 `AGENTS.md`、`README.md`、
+`docs/IMPLEMENTATION_STATUS.md`、`docs/ACCEPTANCE.md` 和
+`docs/COMPATIBILITY.md`，了解实际证据与部署边界。
 
-> 请先阅读 AGENTS.md、README.md、ROADMAP.md、docs/ACCEPTANCE.md 和 docs/COMPATIBILITY.md，按路线图完成 M1 的离线插件实现。不要停在补充计划或创建空壳；采用测试先行，完成协议、记忆、状态机、配置、事件过滤和 SDK 适配的可运行产品测试。复用仓库已有的源码快照与探针，不必重做整轮源码研究。4.29.1 只是交接时已验证的回归基线，Pi 以后会更新；开始适配与部署前请重新核验实际运行版本、SDK 接口和 Python 要求，使用项目内相应 Python 环境，优先公开稳定 API，并保留旧版回归测试，不要为保持基线而锁定、降级或自动升级 Pi；Mac 系统 Python 3.9 仅用于现有交接检查。保持默认关闭、默认 shadow、空白名单 fail-closed，不影响正常 @、命令和私聊。不修改真实 Pi 部署，不读取账号密钥或群聊记录，不调用真实模型、不发群消息、不启动完整 AstrBot，不创建远端仓库。完成 M1 后汇报真实测试结果和剩余边界；在进入真实模型/平台或部署阶段前停下让我确认。
+在项目目录复现：
 
-上面是新的实施目标，不表示已有产品测试已通过。仓库中的 12 项/每基线探针仅证明 SDK 控制流。
+```bash
+/opt/homebrew/bin/uv sync --locked --group dev
+.venv/bin/python -m pytest -q tests
+.venv/bin/ruff check engine.py main.py tests
+python3 tools/verify_handoff.py
+python3 research/probe.py
+ASTRBOT_PROBE_SOURCE="$PWD/research/snapshots/deployed-4.29.3/sources" python3 research/probe.py
+ASTRBOT_PROBE_SOURCE="$PWD/research/snapshots/research-master/sources" python3 research/probe.py
+```
+
+产品测试使用假模型/事件与真实 SDK 类型；每组 12 项探针只是保存的 SDK
+接口证据。当前没有真实模型、平台或 Pi 插件部署验收，不重做无边界研究，
+也不把历史升级授权解释为本插件的部署许可。
+
+后续修改继续测试先行。准备 M2 时，先只读核验 Pi 实际服务版本和关键能力，
+再由用户确定 Provider、人设、机器人与测试群并放行真实调用及部署。
+shadow 仍然会产生模型调用。保持出厂关闭、shadow 开启、空白名单不匹配任何群；
+不要读取真实密钥或聊天记录进入仓库，也不要自行安装插件、重启服务或启用 live。
