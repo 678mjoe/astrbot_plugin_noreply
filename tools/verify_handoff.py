@@ -27,7 +27,7 @@ def main() -> None:
             errors.append('Missing or empty required file: ' + rel)
 
     snapshots = ROOT / 'research' / 'snapshots'
-    for name in ('deployed-4.29.1', 'research-master'):
+    for name in ('deployed-4.29.1', 'deployed-4.29.3', 'research-master'):
         folder = snapshots / name
         manifest_path = folder / 'manifest.json'
         if not manifest_path.is_file():
