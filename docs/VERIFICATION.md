@@ -13,7 +13,7 @@
 | 命令 | 真实结果 |
 | --- | --- |
 | `python3 tools/verify_handoff.py` | 通过；6 份源码快照 hash、5 个本地 Markdown 链接校验正常 |
-| `python3 research/probe.py` | 部署版 4.29.1：12 tests，OK |
+| `python3 research/probe.py` | 交接时部署快照 4.29.1：12 tests，OK；不代表后续 Pi 版本 |
 | `ASTRBOT_PROBE_SOURCE="$PWD/research/snapshots/research-master/sources" python3 research/probe.py` | 固定研究提交：12 tests，OK |
 
 这些验证在 Pi 暂存目录也执行通过。交接文件的 SHA-256 在传输后另行核对。Git 状态与初始提交请以项目内 `git status`、`git log -1` 为准；不把探针或文档检查计为 M1 产品测试。
@@ -21,6 +21,7 @@
 ## 未验证项
 
 - `main.py` / `engine.py` 产品代码和产品测试：尚未创建。
-- Python >=3.12 的完整开发环境与 AstrBot SDK 依赖：尚未安装到本项目。
+- 满足实际目标 SDK Python 要求的完整开发环境与依赖：尚未安装到本项目。
+- Pi 后续更新版本的实际兼容性：需重新核验，现有探针不自动覆盖未知新版。
 - 真实模型的协议遵守、插话质量、费用、平台送达：未测试。
 - M2 shadow/live 与 M3 正常会话历史桥接：未实施。

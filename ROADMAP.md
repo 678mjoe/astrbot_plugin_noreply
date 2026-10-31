@@ -6,14 +6,15 @@
 
 **Architecture:** `main.py` 只负责 AstrBot 配置、事件、模型/人设查询和普通文本结果；`engine.py` 负责输出协议、近期观察窗口、生成尝试状态。模型调用一次，非流式，无 tools。正常 `@`、命令和私聊保留现有链路；正常会话与自主插话的双向历史桥接放到 M3。
 
-**Tech Stack:** Python >=3.12、asyncio、AstrBot 4.29.1 插件 API；pytest 与 pytest-asyncio 用于开发测试；生产运行时不新增独立服务或第三方状态库。
+**Tech Stack:** asyncio、AstrBot 公开插件 API，开发 Python 按实际目标 SDK 要求选择；4.29.1 / Python >=3.12 是已验证回归基线而非永久版本锁；pytest 与 pytest-asyncio 用于开发测试；生产运行时不新增独立服务或第三方状态库。
 
 ---
 
 ## 0. 先确认本次交接状态
 
 - [x] 路线与边界已定；含历史研究和两个明确区分的源码快照。
-- [x] 已确认 Pi 实际安装的是 AstrBot 4.29.1，非 Git 工作树，Python 要求 >=3.12。
+- [x] 交接时观测到 Pi 安装 AstrBot 4.29.1，非 Git 工作树，Python 要求 >=3.12；此条是历史事实，不保证以后版本不变。
+- [ ] 实施适配、部署前与 Pi 升级后重新核验实际运行版本、Python 要求和相关 API；没有当前信息时只完成离线实现，明确标记未验证。
 - [x] 已确认 Mac 默认 Python 是 3.9.6，存在 `/opt/homebrew/bin/uv`。
 - [ ] 尚未实现 `main.py`、`engine.py`、插件配置和产品测试。
 - [ ] 未创建完整开发 `.venv`，未安装 AstrBot 到 Mac 开发环境。
@@ -92,7 +93,7 @@ tests/
 **Files:** 创建 `.venv`（忽略入库），随后创建 `pyproject.toml`；不改任何全局环境。
 
 1. 先运行已有交接检查与两组探针，保留实际结果。
-2. 用明确 Python 3.12 创建本项目环境：
+2. 先核验实际目标 SDK 的 Python 要求。下面以已验证基线所需的 Python 3.12 演示；若新版要求更高，替换为新版要求，不改系统 Python：
 
 ```bash
 /opt/homebrew/bin/uv venv --python 3.12 .venv
@@ -101,7 +102,7 @@ tests/
 ```
 
 3. 允许 uv 按需要下载用户级 Python，不允许 sudo。下载失败时先报告原因，不把系统 3.9 当替代。
-4. 确认项目 Python >=3.12，依赖只在本项目 `.venv`。创建真实依赖声明并记录解析结果；不宣称这一步已完成产品测试。
+4. 确认项目 Python 满足当前目标 SDK 的要求，依赖只在本项目 `.venv`。创建真实依赖声明并记录解析结果；不宣称这一步已完成产品测试。
 
 ### 任务 1：实现输出协议纯函数
 
@@ -186,13 +187,13 @@ def test_marker_quoted_in_normal_prose_is_not_suppressed():
 
 建议初值：窗口 40 条、单条 500 字符、背景 12000 字符、尝试间隔 10 秒、自主发言冷却 30 秒、总超时 30 秒、输出 600 字符。它们是试用建议，不是模型性能实测值。
 
-`metadata.yaml` 按 AstrBot 4.29.1 的真实插件格式填写；不要伪造作者、仓库 URL 或已选定许可证。运行 `.venv/bin/python -m pytest -q tests/test_handler.py`。
+`metadata.yaml` 按实际目标版本的公开插件格式填写；兼容性上下界必须有测试/能力依据，不能因为历史回归基线就硬锁为 4.29.1；不要伪造作者、仓库 URL 或已选定许可证。运行 `.venv/bin/python -m pytest -q tests/test_handler.py`。
 
 ### 任务 5：接入 SDK 但仍使用假 Provider
 
 **Files:** 修改 `main.py`，创建 `tests/test_sdk_contract.py`。
 
-对照默认部署快照而非只看 master。所需调用链：
+默认的 4.29.1 快照仅作回归证据，同时核验实际运行版本而非只看 master。优先检查方法签名、响应字段、事件过滤和结果发送契约，差异集中在适配层。所需调用链：
 
 ```python
 provider_id = await self.context.get_current_chat_provider_id(
@@ -211,14 +212,15 @@ response = await self.context.llm_generate(
 
 调用外围有整体超时。`request_max_retries=0` 不是所有 Provider 内部错误恢复的绝对保证。未配置模型或人设时失败关闭，不悄悄换人设、换模型或申请凭据。
 
-如需真实 SDK 类型与导入验证，可在项目虚拟环境安装固定版本，但不启动服务器：
+如需真实 SDK 类型与导入验证，在隔离虚拟环境中安装已核验的实际目标版本；固定版本用于复现实验，不是给 Pi 加版本锁。不启动服务器：
 
 ```bash
-/opt/homebrew/bin/uv pip install --python .venv/bin/python 'astrbot==4.29.1'
+# 先将 ASTRBOT_TARGET_VERSION 设为已核验版本；4.29.1 可用于旧版回归环境。
+/opt/homebrew/bin/uv pip install --python .venv/bin/python "astrbot==${ASTRBOT_TARGET_VERSION:?请先核验实际目标版本}"
 .venv/bin/python -m pytest -q tests/test_sdk_contract.py tests/test_handler.py
 ```
 
-用 monkeypatch/假 Context 覆盖网络边界。不得使用真实运行配置或模型 key 作为测试夹具。
+用 monkeypatch/假 Context 覆盖网络边界。保留 4.29.1 回归，并测试当前实际目标版本（若相同不必重复建环境）；真实升级后先做兼容性检查，不凭版本数字承诺所有新版可用。能力缺失时失败关闭自主插话，正常 @/命令不受影响。不得使用真实运行配置或模型 key 作为测试夹具。
 
 ### 任务 6：输出与普通链路共存
 
@@ -255,7 +257,7 @@ M1 完成后可以交付离线插件，但在真实模型、平台或 Pi 部署�
 
 ### M2：影子试运行，再单群 live
 
-1. 用户确定测试机器人/群、人设和聊天模型，并批准实际模型调用。
+1. 先只读核验实际服务运行环境中的 AstrBot 版本、Python 要求和关键 API，更新兼容性记录；不是用工作目录中的系统 Python 猜版本。然后由用户确定测试机器人/群、人设和聊天模型，并批准实际模型调用。
 2. 检查群内其他主动回复插件及内置 `active_reply`，由用户同意后再调整。
 3. shadow 不发消息，记录合适插话、误插话、过度沉默与遗漏的真实样例。
 4. 在一次性、小范围测试中核实协议与费用，不能以解析器测试代替语义评估。

@@ -15,7 +15,7 @@ python3 research/probe.py
 ASTRBOT_PROBE_SOURCE="$PWD/research/snapshots/research-master/sources" python3 research/probe.py
 ```
 
-这些命令只用标准库，不调用真实模型，不连接聊天平台。**探针可以使用 Mac 系统 Python 3.9；实际插件与 AstrBot 4.29.1 的开发环境需要 Python >=3.12。** 不要因为探针通过，就使用系统 Python 3.9 安装完整 AstrBot。
+这些命令只用标准库，不调用真实模型，不连接聊天平台。**探针可以使用 Mac 系统 Python 3.9；已知回归基线 AstrBot 4.29.1 需要 Python >=3.12；实际实施时须按 Pi 当前版本的 SDK 要求选择开发 Python。** 不要因为探针通过，就使用系统 Python 3.9 安装完整 AstrBot。
 
 Mac 已发现 `/opt/homebrew/bin/uv`。创建开发虚拟环境是后续实施步骤，不在此交接阶段预先安装依赖或启动服务。详见路线图任务 0。
 
@@ -35,11 +35,13 @@ Mac 已发现 `/opt/homebrew/bin/uv`。创建开发虚拟环境是后续实施�
 
 | 对象 | 基线 |
 | --- | --- |
-| Pi 上实际部署 | AstrBot **4.29.1**，要求 Python **>=3.12** |
+| 交接时观测到的部署基线 | AstrBot **4.29.1**，要求 Python **>=3.12**；以后可能更新 |
 | 首次源码研究 | `3d92821ad9d90df33fc242e7b159a3260075eb2c` |
-| 当前源码适配探针 | 默认读取已部署 4.29.1 的只读源码快照 |
+| 固定回归探针 | 默认读取交接时保存的 4.29.1 快照，不代表 Pi 当前仍是该版本 |
 
 两版 `llm_generate()`、`get_current_chat_provider_id()`、`get_persona()` 的 AST 归一化结果一致；`ProcessStage.process()` 在研究快照中增加了 session-waiter 分派，不能把两个版本视为完全相同。详见 [兼容性记录](docs/COMPATIBILITY.md)。
+
+**兼容性原则：4.29.1 只是已验证的回归基线，不是永久锁定目标。** 实施、部署与升级后均要重新核验实际运行版本及所需 API；优先使用稳定公开接口，不为保持旧基线而降级、锁定或自动升级 Pi。未知版本不能仅凭版本号宣称兼容。
 
 ## 仓库内容
 
