@@ -37,12 +37,13 @@ ASTRBOT_PROBE_SOURCE="$PWD/research/snapshots/research-master/sources" python3 r
 
 ## 配置与使用边界
 
-`_conf_schema.json` 中的出厂值为 `enabled=false`、`shadow_mode=true`、`allowed_groups=[]`、`persona_id=""`。必须显式配置现有人设及准确群条目；没有模型或人设时不回退到其他模型或人设。
+`_conf_schema.json` 中的出厂值为 `enabled=false`、`shadow_mode=true`、`all_groups=false`、`allowed_groups=[]`、`persona_id=""`。必须显式配置现有人设，并选择全群模式或准确群条目；没有模型或人设时不回退到其他模型或人设。
 
-每个白名单条目采用 `平台实例 ID|机器人自身 ID|真实群 ID`，三个字段精确匹配。例如 `test-adapter|test-bot|test-group` 只说明格式，不对应真实群。不支持通配符；空列表不匹配任何群。同群不同发送者共享窗口，即使 AstrBot 的 UMO 按发送者隔离。
+每个白名单条目采用 `平台实例 ID|机器人自身 ID|真实群 ID`，三个字段精确匹配。例如 `test-adapter|test-bot|test-group` 只说明格式，不对应真实群。不支持通配符；默认 `all_groups=false` 时空列表不匹配任何群。显式设置 `all_groups=true` 才开放所有群，不再检查该白名单；仍尊重来源 AI 开关，私聊、显式唤醒和命令不增加自主调用。同群不同发送者共享窗口，即使 AstrBot 的 UMO 按发送者隔离。
 
 | 配置 | 默认值 | 含义 |
 | --- | --- | --- |
+| `all_groups` | false | 显式全群模式；关闭时仅匹配准确白名单 |
 | `window_messages` | 300 | 每群最多保留的观察条数 |
 | `message_chars` | 0 | 可选正文字符上限；0 为不截断 |
 | `context_chars` | 0 | 可选完整 JSON 字符上限；0 为不限制，启用时至少 512 |

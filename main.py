@@ -57,12 +57,17 @@ class Settings:
     persona_id: str = ""
     limits: Limits = Limits()
     diagnostics_enabled: bool = False
+    all_groups: bool = False
 
     @classmethod
     def read(cls, config: Mapping[str, ConfigValue]) -> Settings:
         enabled, shadow = config.get("enabled", False), config.get("shadow_mode", True)
         diagnostics = config.get("diagnostics_enabled", False)
-        if any(type(value) is not bool for value in (enabled, shadow, diagnostics)):
+        all_groups = config.get("all_groups", False)
+        if any(
+            type(value) is not bool
+            for value in (enabled, shadow, diagnostics, all_groups)
+        ):
             raise ConfigError("switch")
         persona_id = config.get("persona_id", "")
         entries = config.get("allowed_groups", [])
@@ -104,6 +109,7 @@ class Settings:
             persona_id.strip(),
             Limits(**integers, **numbers),
             diagnostics,
+            all_groups,
         )
 
 
@@ -175,7 +181,7 @@ class NoReplyPlugin(Star):
         if (
             not self._compatible
             or not settings.enabled
-            or key not in settings.allowed_groups
+            or (not settings.all_groups and key not in settings.allowed_groups)
             or settings.limits != self.engine.limits
         ):
             return False

@@ -9,8 +9,13 @@
     "type": "bool",
     "default": true
   },
+  "all_groups": {
+    "description": "Explicitly enable all group chats; source AI settings still apply. False uses the exact allowlist.",
+    "type": "bool",
+    "default": false
+  },
   "allowed_groups": {
-    "description": "Exact platform_id|bot_id|group_id entries; empty enables no groups",
+    "description": "Used when all_groups=false: exact platform_id|bot_id|group_id entries; empty enables no groups in that mode",
     "type": "list",
     "default": []
   },
