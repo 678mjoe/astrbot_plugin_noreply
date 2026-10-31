@@ -43,13 +43,15 @@ class Message:
     timestamp: float
     message_id: str
     text: str
+    is_bot: bool | None = None
+    is_admin: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class Limits:
-    window_messages: int = 40
-    message_chars: int = 500
-    context_chars: int = 12000
+    window_messages: int = 300
+    message_chars: int = 0
+    context_chars: int = 0
     attempt_interval: float = 10.0
     reply_cooldown: float = 30.0
     timeout: float = 30.0
@@ -62,12 +64,12 @@ class Limits:
                 value < 1
                 for value in (
                     self.window_messages,
-                    self.message_chars,
                     self.max_reply_chars,
                     self.max_groups,
                 )
             )
-            or self.context_chars < 512
+            or self.message_chars < 0
+            or (self.context_chars != 0 and self.context_chars < 512)
         ):
             raise InvalidLimits("bounds")
         if (
@@ -185,7 +187,11 @@ class Engine:
             return False
         bounded = replace(
             message,
-            text=message.text[: self.limits.message_chars],
+            text=(
+                message.text[: self.limits.message_chars]
+                if self.limits.message_chars
+                else message.text
+            ),
             sender_id=_bounded_identity(message.sender_id),
             display_name=message.display_name[:80],
             message_id=digest,
@@ -193,16 +199,17 @@ class Engine:
         )
         # A single highly escaped record must also fit the complete JSON budget.
         while (
-            len(serialize_snapshot((bounded,))) > self.limits.context_chars
+            self.limits.context_chars > 0
+            and len(serialize_snapshot((bounded,))) > self.limits.context_chars
             and bounded.text
         ):
             bounded = replace(bounded, text=bounded.text[: len(bounded.text) // 2])
         if not bounded.text:
             return False
         state.messages.append(bounded)
-        while (
-            len(state.messages) > self.limits.window_messages
-            or len(serialize_snapshot(tuple(state.messages)))
+        while len(state.messages) > self.limits.window_messages or (
+            self.limits.context_chars > 0
+            and len(serialize_snapshot(tuple(state.messages)))
             > self.limits.context_chars
         ):
             state.messages.popleft()

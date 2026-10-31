@@ -22,17 +22,17 @@
   "window_messages": {
     "description": "Maximum observations per physical group",
     "type": "int",
-    "default": 40
+    "default": 300
   },
   "message_chars": {
-    "description": "Maximum characters per observation",
+    "description": "Maximum characters per observation; 0 disables text truncation",
     "type": "int",
-    "default": 500
+    "default": 0
   },
   "context_chars": {
-    "description": "Maximum serialized background characters (minimum 512)",
+    "description": "Maximum serialized background characters; 0 disables this cap, otherwise minimum 512",
     "type": "int",
-    "default": 12000
+    "default": 0
   },
   "attempt_interval": {
     "description": "Minimum seconds between attempts, including silence and errors",

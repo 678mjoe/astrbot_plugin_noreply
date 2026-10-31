@@ -43,9 +43,9 @@ ASTRBOT_PROBE_SOURCE="$PWD/research/snapshots/research-master/sources" python3 r
 
 | 配置 | 默认值 | 含义 |
 | --- | --- | --- |
-| `window_messages` | 40 | 每群最多保留的观察条数 |
-| `message_chars` | 500 | 每条正文字符上限 |
-| `context_chars` | 12000 | 包括身份、时间与 JSON 转义的背景总字符上限，最小 512 |
+| `window_messages` | 300 | 每群最多保留的观察条数 |
+| `message_chars` | 0 | 可选正文字符上限；0 为不截断 |
+| `context_chars` | 0 | 可选完整 JSON 字符上限；0 为不限制，启用时至少 512 |
 | `attempt_interval` | 10 秒 | 包括沉默和失败的生成尝试间隔 |
 | `reply_cooldown` | 30 秒 | 本地 live 结果交给发送阶段后的发言冷却 |
 | `timeout` | 30 秒 | 模型路由、人设查询与生成的整体截止时间 |
