@@ -3,7 +3,61 @@
 from astrbot.api.event import MessageChain
 from astrbot.api.message_components import Plain
 
-from .batch_runner import SendNotReady
+from .batch_runner import SendNotReady, SendRejected
+
+
+def _qq_rejection(exc):
+    """Read only status/code from the exact SDK decoder traceback.
+
+    This botpy version drops structured response fields when raising. Do not
+    parse human error text, patch global SDK functions, or copy response bodies.
+    An unknown decoder/version simply keeps conservative unknown-send handling.
+    """
+    from botpy import http as bot_http
+
+    decoder = getattr(getattr(bot_http, "_handle_response", None), "__code__", None)
+    trace = exc.__traceback__
+    while trace is not None:
+        if decoder is not None and trace.tb_frame.f_code is decoder:
+            local = trace.tb_frame.f_locals
+            data = local.get("data")
+            status = getattr(local.get("response"), "status", None)
+            code = (
+                data.get("err_code", data.get("code"))
+                if isinstance(data, dict)
+                else None
+            )
+            # Deduplication may refer to an already accepted send: never replay.
+            if (
+                type(status) is int
+                and 400 <= status < 500
+                and type(code) is int
+                and code
+                in {
+                    304103,
+                    40034005,
+                    40034128,
+                    40034100,
+                    40034105,
+                    40054002,
+                    40034006,
+                    40054007,
+                    40054010,
+                }
+            ):
+                return SendRejected(code, status)
+        trace = trace.tb_next
+    return None
+
+
+async def _post_qq(api, group, payload):
+    try:
+        return await api.post_group_message(group_openid=group, **payload)
+    except Exception as exc:
+        rejection = _qq_rejection(exc)
+        if rejection is not None:
+            raise rejection from None
+        raise
 
 
 def describe_transport(event) -> dict:
@@ -39,14 +93,21 @@ async def send_plain(context, room, item) -> str:
         if anchor:
             payload["msg_id"] = anchor
         try:
-            result = await api.post_group_message(group_openid=key.group_id, **payload)
+            result = await _post_qq(api, key.group_id, payload)
+        except SendRejected as exc:
+            if "msg_id" not in payload or exc.code not in {304103, 40034005, 40034128}:
+                raise
+            # An expired/exhausted anchor is an explicit non-acceptance, even
+            # when old botpy misleadingly calls its HTTP 400 a ServerError.
+            payload.pop("msg_id")
+            result = await _post_qq(api, key.group_id, payload)
         except (ForbiddenError, MethodNotAllowedError, NotFoundError):
             # Only definite rejections may fall back to proactive sending.
             # Timeouts/server failures are ambiguous and must not be replayed.
             if "msg_id" not in payload:
                 raise
             payload.pop("msg_id")
-            result = await api.post_group_message(group_openid=key.group_id, **payload)
+            result = await _post_qq(api, key.group_id, payload)
         receipt = (
             result.get("id")
             if isinstance(result, dict)

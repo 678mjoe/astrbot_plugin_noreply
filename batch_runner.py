@@ -11,6 +11,15 @@ from .batch_protocol import InvalidBatch, describe_json_failure, parse_batch
 from .batch_store import BatchStore, StaleBatch
 
 
+class SendRejected(RuntimeError):
+    """A structured QQ business rejection: no message was accepted."""
+
+    def __init__(self, code: int, status: int):
+        self.code, self.status = code, status
+        self.retry_delay = 60.0 if code in {40034100, 40034105, 40054002} else 5.0
+        super().__init__(f"qq_http_{status}_code_{code}")
+
+
 class SendNotReady(RuntimeError):
     """No network send was attempted; retrying is safe."""
 
@@ -212,6 +221,16 @@ class BatchRunner:
                 raise RuntimeError("missing_send_ack")
             self.store.sent(item["id"], receipt, self.clock())
             self.log("accepted", room["room"], str(item["id"]))
+        except SendRejected as exc:
+            self.store.not_ready(item["id"], str(exc))
+            self.store.defer_send(
+                room["room"], self.clock() + max(opts.retry_base, exc.retry_delay)
+            )
+            self.log(
+                "send_rejected",
+                room["room"],
+                f"{item['id']},http={exc.status},code={exc.code}",
+            )
         except SendNotReady:
             self.store.not_ready(item["id"])
             self.store.defer_send(room["room"], self.clock() + opts.retry_base)

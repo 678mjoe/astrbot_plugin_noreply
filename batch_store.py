@@ -352,11 +352,11 @@ class BatchStore:
                 == 1
             )
 
-    def not_ready(self, id):
+    def not_ready(self, id, category=""):
         with self.db:
             self.db.execute(
-                "UPDATE items SET send_state='pending' WHERE id=? AND send_state='sending'",
-                (id,),
+                "UPDATE items SET send_state='pending',error=CASE WHEN ?='' THEN error ELSE ? END WHERE id=? AND send_state='sending'",
+                (category[:80], category[:80], id),
             )
 
     def unknown(self, id, category):
