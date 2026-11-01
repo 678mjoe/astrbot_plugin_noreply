@@ -7,7 +7,7 @@ from contextvars import Context
 from dataclasses import dataclass
 from typing import Any
 
-from .batch_protocol import InvalidBatch, parse_batch
+from .batch_protocol import InvalidBatch, describe_json_failure, parse_batch
 from .batch_store import BatchStore, StaleBatch
 
 
@@ -182,6 +182,8 @@ class BatchRunner:
                 shadow=opts.shadow,
                 suppress=suppress,
             )
+            if output.text.lstrip().startswith("```"):
+                self.log("fence_accepted", key, ",".join(map(str, ids)))
             self.log("judged", key, ",".join(map(str, ids)))
         except asyncio.CancelledError:
             raise
@@ -189,6 +191,8 @@ class BatchRunner:
             self.log("cancelled", key, ",".join(map(str, ids)))
         except Exception as exc:
             category = str(exc) if isinstance(exc, InvalidBatch) else type(exc).__name__
+            if category == "invalid_json":
+                self.log("invalid_output", key, describe_json_failure(output.text))
             self.store.defer(key, self.clock(), ids, opts.retry_base, category)
             self.log("retry", key, category)
 

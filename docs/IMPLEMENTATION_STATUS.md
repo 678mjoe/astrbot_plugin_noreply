@@ -7,7 +7,9 @@
 - Mac 全套与 Pi 当前实际 AstrBot 4.29.3 SDK 离线全套均已执行通过；最终测试数字和部署验收见本轮提交与私有部署回读。SDK 有已知 audioop 弃用警告。
 - 没有运行 Codex/独立审查，也未为测试调用收费模型或向真实群发消息。真实模型 JSON 遵循率、回复质量、终端送达未由离线测试认证。
 - 设计/语义：[BATCH_JUDGMENTS.md](BATCH_JUDGMENTS.md)。维护保留已批准的全群正式模式，完整诊断仍默认关闭。
-- 本轮最终验证：Mac 220 tests、Pi 实际服务 SDK 220 tests，Ruff 和文档/快照完整性均通过；一条 SDK audioop 弃用警告。
+- 批量版初次上线验证为两端各 220 tests。后续 JSON 围栏兼容与安全结构诊断增量：Mac 238 tests、Pi 实际服务 SDK 238 tests，Ruff 通过；一条 SDK audioop 弃用警告。
+- 当前正式实例取消正常判定间隔（attempt_interval=0），保留 reply_cooldown=1；错误退避、单群单 worker、全群 live 与完整诊断关闭均保留。仅实例参数调整，未改出厂默认。
+- JSON 协议明确裸 JSON、完整示例与人设/外层格式分离；解析器仅兼容一层完整外部围栏，其余覆盖/类型/顺序校验不变。安全形态日志不保存正文或原始模型响应。
 - 2026-10-31 22:46（Asia/Shanghai）已维护部署：enabled=true、shadow_mode=false、all_groups=true、batch_mode=true、batch_size=32、diagnostics=false；11 个运行文件 hash 一致，服务/面板 200、SQLite 完整性/私有权限通过，unit 与原版核心 hash 不变。首次启动 ledger 无合格输入；不是实际模型质量验收。
 
 ## 历史阶段记录
