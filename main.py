@@ -69,7 +69,6 @@ class Settings:
     batch_mode: bool = True
     batch_size: int = 32
     batch_retry_base: float = 5.0
-    provider_id: str = ""
     reply_guidance: str = ""
 
     @classmethod
@@ -84,10 +83,7 @@ class Settings:
         ):
             raise ConfigError("switch")
         persona_id = config.get("persona_id", "")
-        provider_id = config.get("provider_id", "")
         reply_guidance = config.get("reply_guidance", "")
-        if not isinstance(provider_id, str) or provider_id != provider_id.strip():
-            raise ConfigError("provider_id")
         if not isinstance(reply_guidance, str):
             raise ConfigError("reply_guidance")
         entries = config.get("allowed_groups", [])
@@ -143,7 +139,6 @@ class Settings:
             batch_mode,
             batch_size,
             float(retry),
-            provider_id=provider_id,
             reply_guidance=reply_guidance,
         )
 
@@ -383,10 +378,7 @@ class NoReplyPlugin(Star):
     ) -> ModelOutput:
         stage = "provider_lookup"
         try:
-            provider_id = (
-                settings.provider_id
-                or await self.context.get_current_chat_provider_id(umo=origin)
-            )
+            provider_id = await self.context.get_current_chat_provider_id(umo=origin)
             if not provider_id or not settings.persona_id:
                 return ModelOutput("invalid", None)
             stage = "persona_lookup"

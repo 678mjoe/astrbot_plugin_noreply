@@ -33,13 +33,6 @@
     "hint": "选择 AstrBot 中已创建的人设；留空或人设不存在时不调用模型，不会自动改用其他人设。",
     "_special": "select_persona"
   },
-  "provider_id": {
-    "description": "模型（留空跟随当前会话）",
-    "type": "string",
-    "default": "",
-    "_special": "select_provider",
-    "hint": "可选择已有的聊天模型提供商；留空时沿用 AstrBot 对该来源的模型选择。此处只保存提供商ID，不填写API Key。选择无效模型时不静默回退到其他模型。"
-  },
   "reply_guidance": {
     "description": "参与和回复策略（可选）",
     "type": "text",

@@ -6,9 +6,14 @@ from astrbot_plugin_noreply.main import ConfigError, NoReplyPlugin, Settings
 from test_handler import configured, context
 
 
-async def test_explicit_provider_reaches_real_request_and_skips_routed_lookup():
+@pytest.mark.parametrize("obsolete_value", ["fixture-override", None, True, " bad-id "])
+async def test_model_always_follows_astrbot_even_with_obsolete_plugin_override(
+    obsolete_value,
+):
     ctx = context()
-    plugin = NoReplyPlugin(ctx, configured(provider_id="fixture-source/fixture-model"))
+    ctx.get_current_chat_provider_id.return_value = "fixture-routed-model"
+    plugin = NoReplyPlugin(ctx, configured(provider_id=obsolete_value))
+    assert not hasattr(plugin.settings, "provider_id")
     await plugin._request_model(
         "fixture:GroupMessage:group",
         plugin.settings,
@@ -17,10 +22,11 @@ async def test_explicit_provider_reaches_real_request_and_skips_routed_lookup():
         "trace",
     )
     assert (
-        ctx.llm_generate.call_args.kwargs["chat_provider_id"]
-        == "fixture-source/fixture-model"
+        ctx.llm_generate.call_args.kwargs["chat_provider_id"] == "fixture-routed-model"
     )
-    ctx.get_current_chat_provider_id.assert_not_awaited()
+    ctx.get_current_chat_provider_id.assert_awaited_once_with(
+        umo="fixture:GroupMessage:group"
+    )
     await plugin.terminate()
 
 
@@ -45,9 +51,6 @@ async def test_reply_guidance_is_inserted_before_authoritative_protocol():
 @pytest.mark.parametrize(
     "field,value",
     [
-        ("provider_id", None),
-        ("provider_id", True),
-        ("provider_id", " bad-id "),
         ("reply_guidance", []),
         ("reply_guidance", 3),
     ],
@@ -65,7 +68,7 @@ def test_actual_astrbot_schema_loader_creates_safe_defaults_and_preserves_existi
     root = Path(__file__).resolve().parents[1]
     schema = json.loads((root / "_conf_schema.json").read_text())
     assert schema["persona_id"]["_special"] == "select_persona"
-    assert schema["provider_id"]["_special"] == "select_provider"
+    assert "provider_id" not in schema
     fresh = AstrBotConfig(str(tmp_path / "fresh.json"), schema=schema)
     settings = Settings.read(fresh)
     assert (
@@ -73,7 +76,8 @@ def test_actual_astrbot_schema_loader_creates_safe_defaults_and_preserves_existi
         and settings.shadow_mode is True
         and settings.all_groups is False
     )
-    assert settings.provider_id == settings.reply_guidance == ""
+    assert settings.reply_guidance == ""
+    assert not hasattr(settings, "provider_id")
     previous = {
         key: spec["default"]
         for key, spec in schema.items()
@@ -91,7 +95,7 @@ def test_actual_astrbot_schema_loader_creates_safe_defaults_and_preserves_existi
     oldfile.write_text(json.dumps(previous))
     upgraded = AstrBotConfig(str(oldfile), schema=schema)
     assert all(upgraded[key] == value for key, value in previous.items())
-    assert upgraded["provider_id"] == upgraded["reply_guidance"] == ""
+    assert upgraded["reply_guidance"] == ""
     assert Settings.read(upgraded).enabled is True
 
 
@@ -115,7 +119,7 @@ async def test_empty_new_options_keep_the_original_request_and_routing():
     await plugin.terminate()
 
 
-async def test_invalid_explicit_provider_does_not_retry_with_group_default():
+async def test_routed_provider_failure_does_not_fall_back_to_another_model():
     ctx = context()
     ctx.llm_generate.side_effect = RuntimeError("fixture unavailable provider")
     plugin = NoReplyPlugin(ctx, configured(provider_id="fixture-missing"))
@@ -128,7 +132,9 @@ async def test_invalid_explicit_provider_does_not_retry_with_group_default():
             "trace",
         )
     assert ctx.llm_generate.await_count == 1
-    ctx.get_current_chat_provider_id.assert_not_awaited()
+    ctx.get_current_chat_provider_id.assert_awaited_once_with(
+        umo="fixture:GroupMessage:group"
+    )
     await plugin.terminate()
 
 

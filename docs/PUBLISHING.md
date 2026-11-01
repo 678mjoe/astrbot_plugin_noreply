@@ -5,8 +5,8 @@
 ## 已准备的内容
 
 - 面向使用者的 README 和完整配置说明。
-- 原生 `_conf_schema.json`：18 个普通 UI 可见配置项；旧 `batch_mode` 兼容键保留但隐藏。
-- 可选模型覆盖 `provider_id`，默认空值跟随会话；人设与模型使用官方下拉选择器。
+- 原生 `_conf_schema.json`：17 个普通 UI 可见配置项；旧 `batch_mode` 兼容键保留但隐藏。
+- 模型统一沿用 AstrBot 原版的会话选择，不设置独立覆盖；人设使用官方下拉选择器。
 - 可选参与策略 `reply_guidance`，不替换服务器端必回/JSON校验。
 - MIT LICENSE，版权署名沿用项目作者 M.Joe；第三方材料另见根目录 NOTICE。
 - `metadata.yaml`：仓库地址、语义版本、最低 AstrBot 范围及已验证平台声明。

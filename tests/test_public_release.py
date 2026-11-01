@@ -44,5 +44,5 @@ def test_runtime_archive_contains_required_modules_docs_and_license_without_priv
         assert "MIT License" in archive.read(prefix + "LICENSE").decode()
         schema = json.loads(archive.read(prefix + "_conf_schema.json"))
         assert schema["enabled"]["default"] is False
-        assert schema["provider_id"]["_special"] == "select_provider"
+        assert "provider_id" not in schema
     assert target.stat().st_size < 16 * 1024 * 1024
