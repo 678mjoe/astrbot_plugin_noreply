@@ -16,7 +16,15 @@ class SendRejected(RuntimeError):
 
     def __init__(self, code: int, status: int):
         self.code, self.status = code, status
-        self.retry_delay = 60.0 if code in {40034100, 40034105, 40054002} else 5.0
+        self.channel_wide = code in {
+            40034100,
+            40034105,
+            40054002,
+            40034101,
+            40054003,
+            40054016,
+        }
+        self.retry_delay = 60.0 if self.channel_wide else 5.0
         super().__init__(f"qq_http_{status}_code_{code}")
 
 
@@ -75,6 +83,21 @@ class BatchRunner:
         self.store.invalidate(room, clear=clear)
         self.wake.set()
 
+    def reset_room(self, room):
+        # SQLite commits the reset before a cancellation can run. Retain the
+        # old task slot until it exits, so no overlapping sends can start.
+        deleted = self.store.purge(room)
+        task = self.tasks.get(room)
+        if task is not None and task is not asyncio.current_task():
+            task.cancel()
+        self.blocked_until.pop(room, None)
+        self.wake.set()
+        return deleted
+
+    def _same_epoch(self, room):
+        current = self.store.room(room["room"])
+        return current is not None and current["epoch"] == room["epoch"]
+
     def _due(self, room, opts):
         deadlines = []
         if self.store.pending(room["room"], 1):
@@ -82,6 +105,7 @@ class BatchRunner:
                 max(
                     room["last_attempt"] + opts.attempt_interval,
                     self.store.earliest_retry(room["room"]),
+                    room["send_after"],
                 )
             )
         if not opts.shadow and self.store.next_send(room["room"]):
@@ -149,7 +173,7 @@ class BatchRunner:
 
     async def _turn(self, key):
         room, opts, now = self.store.room(key), self.options(), self.clock()
-        if self.closed or not self.allowed(room):
+        if self.closed or not self.allowed(room) or now < room["send_after"]:
             return
         sending = self.store.next_send(key)
         if (
@@ -199,6 +223,8 @@ class BatchRunner:
         except StaleBatch:
             self.log("cancelled", key, ",".join(map(str, ids)))
         except Exception as exc:
+            if not self._same_epoch(room):
+                return
             category = str(exc) if isinstance(exc, InvalidBatch) else type(exc).__name__
             if category == "invalid_json":
                 self.log("invalid_output", key, describe_json_failure(output.text))
@@ -219,27 +245,40 @@ class BatchRunner:
                 raise asyncio.CancelledError
             if not isinstance(receipt, str) or not receipt:
                 raise RuntimeError("missing_send_ack")
-            self.store.sent(item["id"], receipt, self.clock())
-            self.log("accepted", room["room"], str(item["id"]))
+            if self.store.sent(item["id"], receipt, self.clock()):
+                self.log("accepted", room["room"], str(item["id"]))
         except SendRejected as exc:
-            self.store.not_ready(item["id"], str(exc))
-            self.store.defer_send(
-                room["room"], self.clock() + max(opts.retry_base, exc.retry_delay)
-            )
+            if not self._same_epoch(room):
+                return
+            if exc.channel_wide:
+                self.store.not_ready(item["id"], str(exc))
+                self.store.backoff_send(
+                    room["room"], self.clock(), max(opts.retry_base, exc.retry_delay)
+                )
+                state = "send_rejected"
+            else:
+                self.store.failed(item["id"], str(exc))
+                state = "send_failed"
             self.log(
-                "send_rejected",
+                state,
                 room["room"],
                 f"{item['id']},http={exc.status},code={exc.code}",
             )
         except SendNotReady:
+            if not self._same_epoch(room):
+                return
             self.store.not_ready(item["id"])
-            self.store.defer_send(room["room"], self.clock() + opts.retry_base)
+            self.store.backoff_send(room["room"], self.clock(), opts.retry_base)
             self.log("send_wait", room["room"], str(item["id"]))
         except asyncio.CancelledError:
-            self.store.unknown(item["id"], "cancelled_send")
+            if self._same_epoch(room):
+                self.store.unknown(item["id"], "cancelled_send")
             raise
         except Exception as exc:
+            if not self._same_epoch(room):
+                return
             self.store.unknown(item["id"], type(exc).__name__)
+            self.store.backoff_send(room["room"], self.clock(), opts.retry_base)
             self.log("send_unknown", room["room"], str(item["id"]))
 
     async def close(self):

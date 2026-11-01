@@ -38,6 +38,7 @@ class BatchStore:
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA synchronous=FULL")
+        self.db.execute("PRAGMA secure_delete=ON")
         self.db.executescript("""
         CREATE TABLE IF NOT EXISTS rooms (
             room TEXT PRIMARY KEY, origin TEXT NOT NULL, transport TEXT NOT NULL,
@@ -45,7 +46,11 @@ class BatchStore:
             last_reply REAL NOT NULL DEFAULT 0, judge_after REAL NOT NULL DEFAULT 0,
             failures INTEGER NOT NULL DEFAULT 0, adaptive INTEGER NOT NULL DEFAULT 0,
             send_after REAL NOT NULL DEFAULT 0,
+            send_failures INTEGER NOT NULL DEFAULT 0,
             last_error TEXT NOT NULL DEFAULT ''
+        );
+        CREATE TABLE IF NOT EXISTS reset_dedup (
+            room TEXT NOT NULL, dedup TEXT NOT NULL, PRIMARY KEY(room,dedup)
         );
         CREATE TABLE IF NOT EXISTS cache_usage (
             room TEXT PRIMARY KEY, requests INTEGER NOT NULL DEFAULT 0,
@@ -80,6 +85,13 @@ class BatchStore:
             with self.db:
                 self.db.execute(
                     "ALTER TABLE items ADD COLUMN must_reply INTEGER NOT NULL DEFAULT 0"
+                )
+        if "send_failures" not in {
+            row[1] for row in self.db.execute("PRAGMA table_info(rooms)")
+        }:
+            with self.db:
+                self.db.execute(
+                    "ALTER TABLE rooms ADD COLUMN send_failures INTEGER NOT NULL DEFAULT 0"
                 )
         # A crash after dispatch cannot establish whether the remote accepted it.
         with self.db:
@@ -178,6 +190,11 @@ class BatchStore:
             else uuid.uuid4().hex
         )
         with self.db:
+            if self.db.execute(
+                "SELECT 1 FROM reset_dedup WHERE room=? AND dedup=?",
+                (self.key(key), dedup),
+            ).fetchone():
+                return None
             room = self._room(key, origin, transport)
             cursor = self.db.execute(
                 "INSERT OR IGNORE INTO items(room,dedup,payload,eligible,state,generation,must_reply) VALUES(?,?,?,1,'pending',?,?)",
@@ -236,7 +253,7 @@ class BatchStore:
                 (room, threshold[0]),
             )
             self.db.execute(
-                "UPDATE items SET reply_text='' WHERE room=? AND id<? AND reply_text!='' AND send_state IN ('accepted','shadow','cancelled','none')",
+                "UPDATE items SET reply_text='' WHERE room=? AND id<? AND reply_text!='' AND send_state IN ('accepted','shadow','cancelled','none','failed','unknown')",
                 (room, threshold[0]),
             )
 
@@ -370,17 +387,13 @@ class BatchStore:
             self._prune(room)
 
     def next_send(self, room):
+        # Ready replies retain ID order. Failed/uncertain or not-yet-judged
+        # items are not send barriers and are never silently replayed.
         row = self.db.execute(
-            "SELECT * FROM items WHERE room=? AND reply=1 AND send_state IN ('pending','sending','unknown') ORDER BY id LIMIT 1",
+            "SELECT * FROM items WHERE room=? AND reply=1 AND send_state='pending' ORDER BY id LIMIT 1",
             (room,),
         ).fetchone()
-        if row is None or row["send_state"] != "pending":
-            return None
-        older = self.db.execute(
-            "SELECT 1 FROM items WHERE room=? AND state='pending' AND id<? LIMIT 1",
-            (room, row["id"]),
-        ).fetchone()
-        return None if older else dict(row)
+        return dict(row) if row is not None else None
 
     def work_rooms(self):
         rows = self.db.execute(
@@ -395,6 +408,22 @@ class BatchStore:
     def defer_send(self, room, until):
         with self.db:
             self.db.execute("UPDATE rooms SET send_after=? WHERE room=?", (until, room))
+
+    def backoff_send(self, room, now, base):
+        current = self.room(room)
+        delay = min(60.0, base * 2 ** min(current["send_failures"], 6))
+        with self.db:
+            self.db.execute(
+                "UPDATE rooms SET send_after=?,send_failures=send_failures+1 WHERE room=?",
+                (now + delay, room),
+            )
+
+    def failed(self, id, category):
+        with self.db:
+            self.db.execute(
+                "UPDATE items SET send_state='failed',error=? WHERE id=? AND send_state='sending'",
+                (category[:80], id),
+            )
 
     def claim(self, id):
         with self.db:
@@ -426,13 +455,16 @@ class BatchStore:
                 "SELECT * FROM items WHERE id=? AND send_state='sending'", (id,)
             ).fetchone()
             if row is None:
-                raise StaleBatch("send_changed")
+                return False
             self.db.execute(
                 "UPDATE items SET send_state='accepted',receipt=?,error='' WHERE id=?",
                 (receipt[:256], id),
             )
+            if row["generation"] != self.room(row["room"])["epoch"]:
+                return True
             self.db.execute(
-                "UPDATE rooms SET last_reply=? WHERE room=?", (now, row["room"])
+                "UPDATE rooms SET last_reply=?,send_failures=0,send_after=0 WHERE room=?",
+                (now, row["room"]),
             )
             key = self.group(row["room"])
             msg = Message(
@@ -450,6 +482,28 @@ class BatchStore:
                 (row["room"], "sent:" + str(id), self._payload(msg)),
             )
             self._prune(row["room"])
+            return True
+
+    def purge(self, room):
+        """Delete one room's queue/body rows; retain only epoch/dedup fences.
+
+        Aggregate token accounting, diagnostics and external backups are not
+        conversation contents and are outside this operation's scope.
+        """
+        with self.db:
+            self.db.execute(
+                "INSERT OR IGNORE INTO reset_dedup(room,dedup) "
+                "SELECT room,dedup FROM items WHERE room=? AND eligible=1",
+                (room,),
+            )
+            count = self.db.execute("DELETE FROM items WHERE room=?", (room,)).rowcount
+            self.db.execute(
+                "UPDATE rooms SET epoch=epoch+1,origin='',transport='{}',"
+                "last_attempt=0,last_reply=0,judge_after=0,failures=0,adaptive=0,"
+                "send_after=0,send_failures=0,last_error='' WHERE room=?",
+                (room,),
+            )
+        return count
 
     def invalidate(self, room=None, *, clear=False):
         rooms = (
@@ -480,7 +534,7 @@ class BatchStore:
     def counts(self, room=None):
         where, params = (" WHERE room=?", (room,)) if room is not None else ("", ())
         row = self.db.execute(
-            "SELECT count(CASE WHEN eligible=1 THEN 1 END) AS received,count(CASE WHEN state='pending' THEN 1 END) AS pending,count(CASE WHEN state='judged' THEN 1 END) AS judged,count(CASE WHEN state='cancelled' THEN 1 END) AS cancelled,count(CASE WHEN send_state='pending' THEN 1 END) AS send_pending,count(CASE WHEN send_state='accepted' THEN 1 END) AS accepted,count(CASE WHEN send_state='unknown' THEN 1 END) AS unknown FROM items"
+            "SELECT count(CASE WHEN eligible=1 THEN 1 END) AS received,count(CASE WHEN state='pending' THEN 1 END) AS pending,count(CASE WHEN state='judged' THEN 1 END) AS judged,count(CASE WHEN state='cancelled' THEN 1 END) AS cancelled,count(CASE WHEN send_state='pending' THEN 1 END) AS send_pending,count(CASE WHEN send_state='accepted' THEN 1 END) AS accepted,count(CASE WHEN send_state='unknown' THEN 1 END) AS unknown,count(CASE WHEN send_state='failed' THEN 1 END) AS failed FROM items"
             + where,
             params,
         ).fetchone()

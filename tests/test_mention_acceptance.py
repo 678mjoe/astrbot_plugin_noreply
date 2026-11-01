@@ -33,7 +33,7 @@ async def test_unmanaged_and_command_events_keep_the_original_route(
     monkeypatch.setattr(StarTools, "get_data_dir", lambda _: tmp_path)
     ctx = context(ai=kind != "ai_off")
     incoming = event(
-        "/reset" if kind == "command" else "text",
+        "/help" if kind == "command" else "text",
         group="" if kind == "private" else "group",
     )
     incoming.message_obj.message.insert(

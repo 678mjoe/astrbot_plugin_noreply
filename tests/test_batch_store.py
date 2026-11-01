@@ -85,7 +85,10 @@ def test_judgment_and_send_state_are_distinct_and_sending_crash_is_not_replayed(
     store.close()
     recovered = BatchStore(tmp_path)
     assert recovered.counts()["unknown"] == 1
-    assert recovered.next_send(room) is None
+    assert recovered.next_send(room)["id"] == ids[1]
+    assert not recovered.claim(ids[0]), (
+        "The uncertain item itself must never be replayed"
+    )
     recovered.close()
 
 

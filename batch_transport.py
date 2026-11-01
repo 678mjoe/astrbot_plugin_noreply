@@ -43,6 +43,9 @@ def _qq_rejection(exc):
                     40034006,
                     40054007,
                     40054010,
+                    40034101,
+                    40054003,
+                    40054016,
                 }
             ):
                 return SendRejected(code, status)

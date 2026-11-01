@@ -721,6 +721,19 @@ class NoReplyPlugin(Star):
             if self._batch_runner is not None:
                 self._batch_runner.invalidate(self._batch_runner.store.key(key))
             return
+        if settings.batch_mode and settings.persona_id and self._is_group_reset(event):
+            event.should_call_llm(True)
+            event.set_extra("noreply_control_result", True)
+            if not event.is_admin():
+                yield event.plain_result(
+                    "只有 AstrBot 管理员可以重置当前群的共享上下文。"
+                )
+            else:
+                yield event.plain_result(self._reset_current_group(key))
+            # Yield first so the normal result stage can send the acknowledgement.
+            # Stop afterwards, before the original /new or /reset can run.
+            event.stop_event()
+            return
         if settings.batch_mode:
             try:
                 self._on_batch_message(event, key, settings)
@@ -816,6 +829,33 @@ class NoReplyPlugin(Star):
         )
         yield event.plain_result(outcome.text)
 
+    @staticmethod
+    def _is_group_reset(event: AstrMessageEvent) -> bool:
+        if event.get_message_str().strip() in {"/new", "/reset"}:
+            return True
+        # The actual waking stage strips a configurable prefix. Rely on its
+        # activated native handler instead of interpreting the bare word "new".
+        return any(
+            getattr(handler, "handler_module_path", "")
+            == "astrbot.builtin_stars.builtin_commands.main"
+            and getattr(handler, "handler_name", "") in {"new_conv", "reset"}
+            for handler in event.get_extra("activated_handlers", []) or []
+        )
+
+    def _reset_current_group(self, key: GroupKey) -> str:
+        try:
+            room = BatchStore.key(key)
+            runner = (
+                self._ensure_batch() if self.settings.batch_mode else self._batch_runner
+            )
+            removed = runner.reset_room(room) if runner is not None else 0
+            self.engine.invalidate(key, clear=True)
+            self._prompt_prefix.anchors.pop(room, None)
+        except (OSError, sqlite3.Error, ValueError):
+            self.logger.error("noreply reset_failed; no success acknowledged")
+            return "NoReply 当前群重置失败，请检查本地服务日志；未确认清空成功。"
+        return f"NoReply 当前群已重新开始：删除 {removed} 条队列/背景记录。其他群不受影响；已发出的请求或消息无法撤回。"
+
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("noreply_clear")
     async def clear_memory(self, event: AstrMessageEvent) -> None:
@@ -823,11 +863,9 @@ class NoReplyPlugin(Star):
         settings = self._refresh_settings()
         key = self._batch_key(event) if settings.batch_mode else self._key(event)
         if key is not None and event.is_admin():
-            self.engine.invalidate(key, clear=True)
-            if self._batch_runner is not None:
-                self._batch_runner.invalidate(
-                    self._batch_runner.store.key(key), clear=True
-                )
+            event.should_call_llm(True)
+            event.set_extra("noreply_control_result", True)
+            event.set_result(event.plain_result(self._reset_current_group(key)))
 
     @filter.after_message_sent()
     async def after_sent(self, event: AstrMessageEvent) -> None:
@@ -836,6 +874,7 @@ class NoReplyPlugin(Star):
         key = self._batch_key(event) if settings.batch_mode else self._key(event)
         if (
             key is None
+            or event.get_extra("noreply_control_result", False)
             or event.get_extra("noreply_local_result", False)
             or not self._allowed(event, key, settings)
         ):
