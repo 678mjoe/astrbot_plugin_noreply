@@ -9,7 +9,7 @@ import uuid
 from dataclasses import asdict
 from pathlib import Path
 
-from .batch_protocol import Judgment
+from .batch_protocol import InvalidBatch, Judgment
 from .engine import GroupKey, Message, _bounded_identity
 
 
@@ -53,7 +53,7 @@ class BatchStore:
             state TEXT NOT NULL, generation INTEGER NOT NULL DEFAULT 0, reply INTEGER, reply_text TEXT NOT NULL DEFAULT '',
             send_state TEXT NOT NULL DEFAULT 'none', receipt TEXT NOT NULL DEFAULT '',
             error TEXT NOT NULL DEFAULT '', attempts INTEGER NOT NULL DEFAULT 0,
-            retry_after REAL NOT NULL DEFAULT 0, UNIQUE(room, dedup)
+            retry_after REAL NOT NULL DEFAULT 0, must_reply INTEGER NOT NULL DEFAULT 0, UNIQUE(room, dedup)
         );
         CREATE INDEX IF NOT EXISTS items_room_state ON items(room,state,id);
         CREATE INDEX IF NOT EXISTS items_room_send ON items(room,send_state,id);
@@ -62,6 +62,14 @@ class BatchStore:
         CREATE INDEX IF NOT EXISTS items_retry ON items(room,retry_after,id) WHERE state='pending';
         CREATE INDEX IF NOT EXISTS items_send_work ON items(room,id) WHERE send_state='pending';
         """)
+        # Additive migration: old queue rows retain their original optional status.
+        if "must_reply" not in {
+            row[1] for row in self.db.execute("PRAGMA table_info(items)")
+        }:
+            with self.db:
+                self.db.execute(
+                    "ALTER TABLE items ADD COLUMN must_reply INTEGER NOT NULL DEFAULT 0"
+                )
         # A crash after dispatch cannot establish whether the remote accepted it.
         with self.db:
             self.db.execute(
@@ -102,7 +110,15 @@ class BatchStore:
             data, ensure_ascii=False, allow_nan=False, separators=(",", ":")
         )
 
-    def enqueue(self, key: GroupKey, origin: str, transport: dict, message: Message):
+    def enqueue(
+        self,
+        key: GroupKey,
+        origin: str,
+        transport: dict,
+        message: Message,
+        *,
+        must_reply: bool = False,
+    ):
         dedup = (
             hashlib.sha256(message.message_id.encode()).hexdigest()
             if message.message_id
@@ -111,11 +127,40 @@ class BatchStore:
         with self.db:
             room = self._room(key, origin, transport)
             cursor = self.db.execute(
-                "INSERT OR IGNORE INTO items(room,dedup,payload,eligible,state,generation) VALUES(?,?,?,1,'pending',?)",
-                (room, dedup, self._payload(message), self.room(room)["epoch"]),
+                "INSERT OR IGNORE INTO items(room,dedup,payload,eligible,state,generation,must_reply) VALUES(?,?,?,1,'pending',?,?)",
+                (
+                    room,
+                    dedup,
+                    self._payload(message),
+                    self.room(room)["epoch"],
+                    int(must_reply),
+                ),
             )
+            result = cursor.lastrowid if cursor.rowcount else None
+            if not cursor.rowcount and must_reply:
+                previous = self.db.execute(
+                    "SELECT * FROM items WHERE room=? AND dedup=?", (room, dedup)
+                ).fetchone()
+                if (
+                    previous
+                    and previous["eligible"]
+                    and not previous["must_reply"]
+                    and previous["generation"] == self.room(room)["epoch"]
+                    and (
+                        previous["state"] == "pending"
+                        or (previous["state"] == "judged" and previous["reply"] == 0)
+                    )
+                ):
+                    # Some adapters deliver ordinary and @ metadata for the same
+                    # platform ID. Upgrade once, never duplicate a prior reply or
+                    # revive explicitly cleared/invalidated work.
+                    self.db.execute(
+                        "UPDATE items SET must_reply=1,payload=?,state='pending',reply=NULL,reply_text='',send_state='none',retry_after=0 WHERE id=?",
+                        (self._payload(message), previous["id"]),
+                    )
+                    result = previous["id"]
             self._prune(room)
-            return cursor.lastrowid if cursor.rowcount else None
+            return result
 
     def observe(self, key: GroupKey, origin: str, transport: dict, message: Message):
         with self.db:
@@ -152,7 +197,9 @@ class BatchStore:
         return data
 
     def pending(self, room, limit, *, ready_at=None):
-        query = "SELECT id,payload FROM items WHERE room=? AND state='pending'"
+        query = (
+            "SELECT id,payload,must_reply FROM items WHERE room=? AND state='pending'"
+        )
         params = [room]
         if ready_at is not None:
             query += " AND retry_after<=?"
@@ -160,7 +207,14 @@ class BatchStore:
         rows = self.db.execute(
             query + " ORDER BY id LIMIT ?", (*params, limit)
         ).fetchall()
-        return [{"id": row["id"], **json.loads(row["payload"])} for row in rows]
+        return [
+            {
+                "id": row["id"],
+                **json.loads(row["payload"]),
+                "must_reply": bool(row["must_reply"]),
+            }
+            for row in rows
+        ]
 
     def earliest_retry(self, room):
         return self.db.execute(
@@ -170,11 +224,15 @@ class BatchStore:
 
     def background(self, room, limit, exclude=()):
         rows = self.db.execute(
-            "SELECT id,payload FROM items WHERE room=? AND payload IS NOT NULL ORDER BY id DESC LIMIT ?",
+            "SELECT id,payload,must_reply FROM items WHERE room=? AND payload IS NOT NULL ORDER BY id DESC LIMIT ?",
             (room, limit),
         ).fetchall()
         return [
-            {"id": row["id"], **json.loads(row["payload"])}
+            {
+                "id": row["id"],
+                **json.loads(row["payload"]),
+                "must_reply": bool(row["must_reply"]),
+            }
             for row in reversed(rows)
             if row["id"] not in exclude
         ]
@@ -224,6 +282,12 @@ class BatchStore:
                 for id in expected
             ):
                 raise StaleBatch("pending_changed")
+            for decision in decisions:
+                required = self.db.execute(
+                    "SELECT must_reply FROM items WHERE id=?", (decision.id,)
+                ).fetchone()[0]
+                if required and (not decision.reply or not decision.text.strip()):
+                    raise InvalidBatch("required_reply_missing")
             stale = self.room(room)["epoch"] != epoch or suppress
             for decision in decisions:
                 generation = self.db.execute(

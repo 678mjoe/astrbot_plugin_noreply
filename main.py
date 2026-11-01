@@ -16,7 +16,7 @@ from typing import Final
 
 from astrbot.api import AstrBotConfig
 from astrbot.api.event import AstrMessageEvent, MessageEventResult, filter
-from astrbot.api.message_components import At, AtAll, Plain
+from astrbot.api.message_components import At, AtAll, Plain, Reply
 from astrbot.api.star import Context, Star, StarTools
 from astrbot.core.platform.message_type import MessageType
 from astrbot.core.provider.entities import LLMResponse
@@ -554,15 +554,48 @@ class NoReplyPlugin(Star):
         )
 
     def _on_batch_message(self, event, key, settings):
-        explicit = self._explicit(event)
-        if explicit and self._batch_runner is not None:
-            self._batch_runner.invalidate(self._batch_runner.store.key(key))
         components = event.get_messages()
-        if not components or not all(isinstance(part, Plain) for part in components):
-            return
-        text = "".join(part.text for part in components).strip()
-        if not text:
-            return
+        command = event.get_message_str().lstrip().startswith("/") or bool(
+            event.get_extra("handlers_parsed_params", {})
+        )
+        required = (
+            bool(settings.persona_id)
+            and not command
+            and any(
+                isinstance(part, At) and str(part.qq) == event.get_self_id()
+                for part in components
+            )
+        )
+        explicit = self._explicit(event)
+        if explicit and not required and self._batch_runner is not None:
+            self._batch_runner.invalidate(self._batch_runner.store.key(key))
+        if required:
+            chunks = []
+            for part in components:
+                if isinstance(part, Plain):
+                    chunks.append(part.text)
+                elif isinstance(part, At):
+                    if str(part.qq) != event.get_self_id():
+                        chunks.append(f" @{part.name or part.qq} ")
+                elif isinstance(part, AtAll):
+                    chunks.append(" [@all] ")
+                elif isinstance(part, Reply):
+                    quoted = part.message_str or part.text or "引用内容未提供"
+                    chunks.append(f" [引用消息: {quoted}] ")
+                else:
+                    # Preserve the existence, not imaginary contents, of media.
+                    chunks.append(
+                        f" [{type(part).__name__}: media content not supplied to this text-only request] "
+                    )
+            text = "".join(chunks).strip() or "[仅 @ 机器人，无其他文字]"
+        else:
+            if not components or not all(
+                isinstance(part, Plain) for part in components
+            ):
+                return
+            text = "".join(part.text for part in components).strip()
+            if not text:
+                return
         is_bot, is_admin = self._sender_flags(event)
         message_id = getattr(event.message_obj, "message_id", "")
         message = Message(
@@ -577,12 +610,22 @@ class NoReplyPlugin(Star):
         )
         runner = self._ensure_batch()
         transport = describe_transport(event)
-        if explicit:
+        if explicit and not required:
             runner.store.observe(key, event.unified_msg_origin, transport, message)
             return
-        id = runner.enqueue(key, event.unified_msg_origin, transport, message)
+        id = runner.enqueue(
+            key, event.unified_msg_origin, transport, message, must_reply=required
+        )
+        if required:
+            # In this SDK True means prohibit the DEFAULT LLM request. It does
+            # not stop propagation/commands or disable our queued generation.
+            event.should_call_llm(True)
         if id is not None:
-            self._batch_log("queued", runner.store.key(key), str(id))
+            self._batch_log(
+                "queued_required" if required else "queued",
+                runner.store.key(key),
+                str(id),
+            )
             self._record(
                 "incoming",
                 uuid.uuid4().hex,
@@ -594,6 +637,7 @@ class NoReplyPlugin(Star):
                 text=text,
                 is_bot=is_bot,
                 is_admin=is_admin,
+                must_reply=required,
             )
 
     @filter.permission_type(filter.PermissionType.ADMIN)

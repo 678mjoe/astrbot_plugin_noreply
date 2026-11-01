@@ -57,8 +57,8 @@ class BatchRunner:
                 self._loop(), name="noreply-batch-dispatch", context=Context()
             )
 
-    def enqueue(self, key, origin, transport, message):
-        id = self.store.enqueue(key, origin, transport, message)
+    def enqueue(self, key, origin, transport, message, *, must_reply=False):
+        id = self.store.enqueue(key, origin, transport, message, must_reply=must_reply)
         self.wake.set()
         return id
 
