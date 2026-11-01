@@ -13,6 +13,7 @@
 /AGENTS.md export-ignore
 /ROADMAP.md export-ignore
 /START_HERE.md export-ignore
+/RELEASE_REVIEW.md export-ignore
 /uv.lock export-ignore
 /pyproject.toml export-ignore
 /.python-version export-ignore

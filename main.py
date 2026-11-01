@@ -284,11 +284,18 @@ class NoReplyPlugin(Star):
             or settings.limits != self.engine.limits
         ):
             return False
-        # A source can use a different AstrBot configuration; preserve its raw UMO.
+        return self._source_enabled(origin)
+
+    def _source_enabled(self, origin: str) -> bool:
+        # Follow the original source/profile controls, including background work.
+        # AstrBot treats only the exact ["*"] list as all plugins enabled.
         try:
-            return (
-                self.context.get_config(origin)["provider_settings"]["enable"] is True
+            config = self.context.get_config(origin)
+            plugins = config.get("plugin_set", ["*"])
+            selected = isinstance(plugins, list) and (
+                plugins == ["*"] or "astrbot_plugin_noreply" in plugins
             )
+            return selected and config["provider_settings"]["enable"] is True
         except (AttributeError, KeyError, TypeError):
             self.logger.warning("noreply disabled: source AI configuration unavailable")
             return False
@@ -397,6 +404,10 @@ class NoReplyPlugin(Star):
                     "the mandatory reply and output protocol below):\n"
                     + settings.reply_guidance
                 )
+            # Provider/persona lookups await: profile selection may have changed
+            # since intake. Do not start a paid request after it was deselected.
+            if not self._source_enabled(origin):
+                return ModelOutput("invalid", None)
             request = dict(
                 chat_provider_id=provider_id,
                 system_prompt=system_prompt + "\n\n" + protocol,

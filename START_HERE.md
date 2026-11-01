@@ -1,28 +1,28 @@
-# 本地接手入口
+# 项目接手与审阅入口
 
-> 当前主路径已实现持久化逐消息批量判定，用户已批准全群正式 live；请先读 [批量设计](docs/BATCH_JUDGMENTS.md) 和 [当前状态](docs/IMPLEMENTATION_STATUS.md)。下文旧 M1/M2 单群试验与未部署描述为历史路线，不代表当前开关。正常 Agent 历史桥接仍未实现。
+当前主路径是持久化批量逐消息判定，普通消息与实际 @ 共用同群背景，@必须回复。模型统一沿用 AstrBot 原版会话选择，不提供插件模型覆盖。
 
-M1 离线实现已经完成；M2 已有一次成功自主生成的 shadow 样本，但因内置主动回复竞争尚未验收通过。先读 `docs/M2_TRIAL_2026-10-31.md` 与 `docs/CONTEXT_DESIGN.md`，再阅读 `AGENTS.md`、`README.md`、
-`docs/IMPLEMENTATION_STATUS.md`、`docs/ACCEPTANCE.md` 和
-`docs/COMPATIBILITY.md`，了解实际证据与部署边界。
+## 阅读顺序
 
-在项目目录复现：
+1. [发布前审阅单](RELEASE_REVIEW.md)：本次范围、实际验证、部署状态与发布边界。
+2. [README](README.md)：用户安装、配置、费用、数据和功能边界。
+3. [完整配置](docs/CONFIGURATION.md) 与 [发布操作](docs/PUBLISHING.md)。
+4. [批量设计](docs/BATCH_JUDGMENTS.md)、[实现状态](docs/IMPLEMENTATION_STATUS.md) 和 [工作约定](AGENTS.md)。
+
+`ROADMAP.md` 和旧 M1/M2 报告保留历史证据，不再作为待办，也不能覆盖上述现状。不要重新启动已取消的缓存调查，不要使用独立 Codex 审查。
+
+## 离线复现
 
 ```bash
-/opt/homebrew/bin/uv sync --locked --group dev
-.venv/bin/python -m pytest -q tests
-.venv/bin/ruff check engine.py main.py tests
+uv sync --locked --group dev
+uv run --locked pytest -q
+uv run --locked ruff check .
 python3 tools/verify_handoff.py
-python3 research/probe.py
-ASTRBOT_PROBE_SOURCE="$PWD/research/snapshots/deployed-4.29.3/sources" python3 research/probe.py
-ASTRBOT_PROBE_SOURCE="$PWD/research/snapshots/research-master/sources" python3 research/probe.py
+python3 tools/build_release.py
 ```
 
-产品测试使用假模型/事件与真实 SDK 类型；每组 12 项探针只是保存的 SDK
-接口证据。当前没有真实模型、平台或 Pi 插件部署验收，不重做无边界研究，
-也不把历史升级授权解释为本插件的部署许可。
+开发依赖只是可复现测试基线，不反向锁定或升级生产。测试使用隔离数据、假模型和假发送，不能借验证之名调用收费模型或向真实群发消息。
 
-后续修改继续测试先行。准备 M2 时，先只读核验 Pi 实际服务版本和关键能力，
-再由用户确定 Provider、人设、机器人与测试群并放行真实调用及部署。
-shadow 仍然会产生模型调用。保持出厂关闭、shadow 开启、空白名单不匹配任何群；
-不要读取真实密钥或聊天记录进入仓库，也不要自行安装插件、重启服务或启用 live。
+## 当前授权
+
+用户授权本轮备份并更新 Pi 插件，保留现有正式运行范围、参数及队列。用户将自行审阅再发布；没有授权推送、公开仓库、重写历史或上架。后续维护仍须核对当时的实际版本、配置与授权。

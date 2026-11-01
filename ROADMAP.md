@@ -1,10 +1,12 @@
-# AstrBot `<noreply>` 插件 Implementation Plan
+# 历史实施路线：AstrBot `<noreply>`
+
+> 下文是已实施阶段的原始设计与验收步骤，保留为历史证据，不是当前待办。当前审阅以 [RELEASE_REVIEW.md](RELEASE_REVIEW.md)、[README](README.md) 和最新实现状态为准。旧版本的内存窗口、未接管 @、未部署或 M1/M2 未完成表述不适用于当前版本。
 
 > 当前增量：实际 @机器人已进入同群持久化批量队列，带 must_reply=true，必须回复且抑制默认 Agent；普通消息仍可沉默。以下较早 M1 设计中的“@保留原链路”不再适用于当前 batch_mode=true 的接管范围。当前语义以 docs/BATCH_JUDGMENTS.md 为准。
 
 > 当前主路径已实现持久化逐消息批量判定，用户已批准全群正式 live；请先读 [批量设计](docs/BATCH_JUDGMENTS.md) 和 [当前状态](docs/IMPLEMENTATION_STATUS.md)。下文旧 M1/M2 单群试验与未部署描述为历史路线，不代表当前开关。正常 Agent 历史桥接仍未实现。
 
-> **For Hermes:** Use subagent-driven-development skill to implement this plan task-by-task. 其他本地 agent 可直接依照同一任务顺序执行，不要求具备 Hermes 专用工具。
+> 历史分步实施说明仅供查阅，不要求重新执行，也不授权调用独立审查代理。
 
 **Goal:** 交付可离线验证的自主群聊插话插件：同一聊天模型输出正文或 `<noreply>`，默认关闭和 shadow，不改动现有部署。
 

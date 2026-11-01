@@ -108,6 +108,6 @@
 
 ## 关于 GUI 验证范围
 
-已用真实 AstrBot 配置解析类验证新建默认配置、旧配置补默认值及其保留行为；人设选择器字段使用官方公开 schema。配置方案与群范围关系及旧队列限制见 [README](../README.md#哪套-astrbot-配置启用插件)。没有为验证此文档登录生产后台、修改生产配置或伪造界面截图。
+已用真实 AstrBot 配置解析类验证新建默认配置、旧配置补默认值及其保留行为；人设选择器字段使用官方公开 schema。配置方案、群范围及暂停/恢复语义见 [README](../README.md#哪套-astrbot-配置启用插件)。没有为验证此文档登录生产后台、修改生产配置或伪造界面截图。
 
 官方参考：[插件配置](https://docs.astrbot.app/dev/star/guides/plugin-config.html)。
