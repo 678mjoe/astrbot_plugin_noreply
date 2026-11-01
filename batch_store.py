@@ -47,6 +47,17 @@ class BatchStore:
             send_after REAL NOT NULL DEFAULT 0,
             last_error TEXT NOT NULL DEFAULT ''
         );
+        CREATE TABLE IF NOT EXISTS cache_usage (
+            room TEXT PRIMARY KEY, requests INTEGER NOT NULL DEFAULT 0,
+            responses INTEGER NOT NULL DEFAULT 0, input_reports INTEGER NOT NULL DEFAULT 0,
+            output_reports INTEGER NOT NULL DEFAULT 0, known_cache_responses INTEGER NOT NULL DEFAULT 0,
+            hit_responses INTEGER NOT NULL DEFAULT 0, input_tokens INTEGER NOT NULL DEFAULT 0,
+            cached_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
+            known_cache_input_tokens INTEGER NOT NULL DEFAULT 0,
+            ratio_cached_tokens INTEGER NOT NULL DEFAULT 0,
+            last_input_tokens INTEGER, last_cached_tokens INTEGER, last_output_tokens INTEGER,
+            updated REAL NOT NULL DEFAULT 0
+        );
         CREATE TABLE IF NOT EXISTS items (
             id INTEGER PRIMARY KEY AUTOINCREMENT, room TEXT NOT NULL,
             dedup TEXT NOT NULL, payload TEXT, eligible INTEGER NOT NULL,
@@ -74,6 +85,48 @@ class BatchStore:
         with self.db:
             self.db.execute(
                 "UPDATE items SET send_state='unknown',error='interrupted_send' WHERE send_state='sending'"
+            )
+
+    def record_cache_request(self, room):
+        with self.db:
+            self.db.execute(
+                "INSERT INTO cache_usage(room,requests) VALUES(?,1) "
+                "ON CONFLICT(room) DO UPDATE SET requests=requests+1",
+                (room,),
+            )
+
+    def record_cache_usage(self, room, usage, now):
+        inputs, cached, output = (
+            usage[k] for k in ("input_tokens", "cached_tokens", "output_tokens")
+        )
+        comparable = inputs is not None and cached is not None
+        with self.db:
+            self.db.execute(
+                "INSERT OR IGNORE INTO cache_usage(room) VALUES(?)", (room,)
+            )
+            self.db.execute(
+                "UPDATE cache_usage SET responses=responses+1,input_reports=input_reports+?,"
+                "output_reports=output_reports+?,known_cache_responses=known_cache_responses+?,"
+                "hit_responses=hit_responses+?,input_tokens=input_tokens+?,cached_tokens=cached_tokens+?,"
+                "output_tokens=output_tokens+?,known_cache_input_tokens=known_cache_input_tokens+?,"
+                "ratio_cached_tokens=ratio_cached_tokens+?,last_input_tokens=?,last_cached_tokens=?,"
+                "last_output_tokens=?,updated=? WHERE room=?",
+                (
+                    int(inputs is not None),
+                    int(output is not None),
+                    int(cached is not None),
+                    int((cached or 0) > 0),
+                    inputs or 0,
+                    cached or 0,
+                    output or 0,
+                    inputs if comparable else 0,
+                    cached if comparable else 0,
+                    inputs,
+                    cached,
+                    output,
+                    now,
+                    room,
+                ),
             )
 
     @staticmethod
@@ -224,7 +277,7 @@ class BatchStore:
 
     def background(self, room, limit, exclude=()):
         rows = self.db.execute(
-            "SELECT id,payload,must_reply FROM items WHERE room=? AND payload IS NOT NULL ORDER BY id DESC LIMIT ?",
+            "SELECT id,payload,must_reply,state FROM items WHERE room=? AND payload IS NOT NULL ORDER BY id DESC LIMIT ?",
             (room, limit),
         ).fetchall()
         return [
@@ -232,6 +285,7 @@ class BatchStore:
                 "id": row["id"],
                 **json.loads(row["payload"]),
                 "must_reply": bool(row["must_reply"]),
+                "_cacheable": row["state"] != "pending",
             }
             for row in reversed(rows)
             if row["id"] not in exclude

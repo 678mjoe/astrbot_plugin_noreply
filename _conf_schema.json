@@ -1,87 +1,128 @@
 {
   "enabled": {
-    "description": "Enable autonomous group evaluation",
+    "description": "启用自动群聊",
     "type": "bool",
-    "default": false
+    "default": false,
+    "hint": "需要同时选好人设和群范围。群消息会发送至所选模型服务商；判断沉默也会消耗额度。",
+    "obvious_hint": true
   },
   "shadow_mode": {
-    "description": "Evaluate without sending replies (still calls the model)",
+    "description": "仅评估、不发言（仍计费）",
     "type": "bool",
-    "default": true
+    "default": true,
+    "hint": "开启后仍调用模型并保存判定，但不外发回复，包括已接管的 @ 消息。确认效果与费用后再关闭。",
+    "obvious_hint": true
   },
   "all_groups": {
-    "description": "Explicitly enable all group chats; source AI settings still apply. False uses the exact allowlist.",
+    "description": "开放所有群",
     "type": "bool",
-    "default": false
+    "default": false,
+    "hint": "默认关闭。开启后不再使用群白名单，但仍遵守来源配置的 AI 开关；请先确认各群成员知情。",
+    "obvious_hint": true
   },
   "allowed_groups": {
-    "description": "Used when all_groups=false: exact platform_id|bot_id|group_id entries; empty enables no groups in that mode",
+    "description": "群白名单",
     "type": "list",
-    "default": []
+    "default": [],
+    "hint": "all_groups 关闭时生效。逐项填写 平台实例ID|机器人ID|真实群ID。QQ官方适配器用 平台实例ID|qq_official|群OpenID，不是 QQ 群号；空列表不开放任何群。"
   },
   "persona_id": {
-    "description": "Existing persona ID; required, no fallback",
+    "description": "人设（必选）",
     "type": "string",
-    "default": ""
+    "default": "",
+    "hint": "选择 AstrBot 中已创建的人设；留空或人设不存在时不调用模型，不会自动改用其他人设。",
+    "_special": "select_persona"
+  },
+  "provider_id": {
+    "description": "模型（留空跟随当前会话）",
+    "type": "string",
+    "default": "",
+    "_special": "select_provider",
+    "hint": "可选择已有的聊天模型提供商；留空时沿用 AstrBot 对该来源的模型选择。此处只保存提供商ID，不填写API Key。选择无效模型时不静默回退到其他模型。"
+  },
+  "reply_guidance": {
+    "description": "参与和回复策略（可选）",
+    "type": "text",
+    "default": "",
+    "hint": "例如：仅在有人明确求助，或讨论涉及编程时参与；避免重复附和。留空时使用人设与内置规则。只控制参与偏好和措辞，不覆盖批量JSON协议及 @必回约束。"
   },
   "window_messages": {
-    "description": "Maximum observations per physical group",
+    "description": "近期背景条数",
     "type": "int",
-    "default": 300
+    "default": 300,
+    "hint": "每个物理群独立保留的近期观察上限；默认300条，用户及机器人自己的观察共用窗口。待判消息单独保留，不会被窗口淘汰。窗口越大，输入费用通常越高。修改后重载插件。"
   },
   "message_chars": {
-    "description": "Maximum characters per observation; 0 disables text truncation",
+    "description": "单条观察字符上限",
     "type": "int",
-    "default": 0
+    "default": 0,
+    "hint": "0 表示不截断；正值限制每条发给模型的正文字符数。修改后重载插件。"
   },
   "context_chars": {
-    "description": "Maximum serialized batch prompt characters; 0 disables. Drop old background first, never silently drop pending IDs; oversize pending batches are retried smaller.",
+    "description": "观察JSON字符预算",
     "type": "int",
-    "default": 0
+    "default": 0,
+    "hint": "0 表示不限制；正值必须至少512。超限先缩减旧背景，待判过大则拆小重试，不悄悄丢掉待判ID；不含人设和内置系统协议。修改后重载插件。"
   },
   "attempt_interval": {
-    "description": "Minimum seconds between attempts, including silence and errors",
+    "description": "判定最小间隔（秒）",
     "type": "float",
-    "default": 10.0
+    "default": 10.0,
+    "hint": "默认10秒，可设0以取消正常判定节流；仍保留同群串行、失败退避与模型耗时。这不是回复间隔。修改后重载插件。"
   },
   "reply_cooldown": {
-    "description": "Minimum seconds between local live replies",
+    "description": "发言最小间隔（秒）",
     "type": "float",
-    "default": 30.0
+    "default": 30.0,
+    "hint": "默认30秒，可按需调小。仅是同群发言的最小间隔；生成、失败退避和平台限制可能使实际等待更长。不会因此丢掉已入队消息。修改后重载插件。"
   },
   "timeout": {
-    "description": "Total seconds for provider lookup, persona lookup and generation",
+    "description": "单次操作超时（秒）",
     "type": "float",
-    "default": 30.0
+    "default": 30.0,
+    "hint": "必须大于0。用于模型调用及发送操作；模型超时保留待判，发送结果不明时不盲目重发。修改后重载插件。"
   },
   "max_reply_chars": {
-    "description": "Maximum accepted reply characters",
+    "description": "单条回复字符上限",
     "type": "int",
-    "default": 600
+    "default": 600,
+    "hint": "必须至少1；超过上限的模型正文不会被直接外发，而会作为非法批次重试。修改后重载插件。"
   },
   "max_groups": {
-    "description": "Maximum concurrent physical group workers in batch mode; additional rooms stay durably queued",
+    "description": "最大并发群worker数",
     "type": "int",
-    "default": 128
+    "default": 128,
+    "hint": "必须至少1。是并发工作数，不是可用群数量上限；更多群继续持久排队。高并发可能增加供应商限流和费用。修改后重载插件。"
   },
   "diagnostics_enabled": {
-    "description": "Opt-in private JSONL of evaluated inputs, prompts, model reply text and decisions. Disable after the trial; do not publish records.",
+    "description": "完整私有诊断（谨慎开启）",
     "type": "bool",
-    "default": false
+    "default": false,
+    "hint": "会额外保存输入、完整人设/提示词、模型回复等敏感内容，默认关闭。日志只能留在本地私有数据目录；不要随问题反馈公开上传。关闭不会自动删除旧文件。",
+    "obvious_hint": true
   },
   "batch_mode": {
-    "description": "Use durable per-message batch judgments; false selects the legacy non-covering snapshot algorithm",
+    "description": "旧版兼容：持久化批量模式",
     "type": "bool",
-    "default": true
+    "default": true,
+    "hint": "请保持true。false是旧快照算法，不保证逐条覆盖，@处理也不同；仅供旧版兼容，不建议普通用户切换。",
+    "invisible": true
   },
   "batch_size": {
-    "description": "Maximum pending messages per model request (1–128); invalid responses halve the retry batch",
+    "description": "每批最多待判条数",
     "type": "int",
-    "default": 32
+    "default": 32,
+    "hint": "范围1～128，默认32。实际批次可能因待判量、退避或非法输出而更小；数字不是背景窗口大小。",
+    "slider": {
+      "min": 1,
+      "max": 128,
+      "step": 1
+    }
   },
   "batch_retry_base": {
-    "description": "Initial retry delay in seconds (0–60 exclusive of zero), exponential up to 60 seconds",
+    "description": "失败初始退避（秒）",
     "type": "float",
-    "default": 5.0
+    "default": 5.0,
+    "hint": "范围大于0且不超过60，默认5；失败项指数退避最长60秒，不把失败当作沉默。"
   }
 }

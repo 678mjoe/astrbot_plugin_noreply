@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import math
 import sqlite3
 import time
@@ -36,6 +35,7 @@ from .engine import (
     serialize_snapshot,
 )
 from .native_context import NativeContextGate
+from .prompt_cache import PromptPrefix, extract_cache_usage
 
 type ConfigValue = (
     str | int | float | bool | None | list[ConfigValue] | dict[str, ConfigValue]
@@ -69,6 +69,8 @@ class Settings:
     batch_mode: bool = True
     batch_size: int = 32
     batch_retry_base: float = 5.0
+    provider_id: str = ""
+    reply_guidance: str = ""
 
     @classmethod
     def read(cls, config: Mapping[str, ConfigValue]) -> Settings:
@@ -82,6 +84,12 @@ class Settings:
         ):
             raise ConfigError("switch")
         persona_id = config.get("persona_id", "")
+        provider_id = config.get("provider_id", "")
+        reply_guidance = config.get("reply_guidance", "")
+        if not isinstance(provider_id, str) or provider_id != provider_id.strip():
+            raise ConfigError("provider_id")
+        if not isinstance(reply_guidance, str):
+            raise ConfigError("reply_guidance")
         entries = config.get("allowed_groups", [])
         if not isinstance(persona_id, str) or not isinstance(entries, list):
             raise ConfigError("routing")
@@ -135,6 +143,8 @@ class Settings:
             batch_mode,
             batch_size,
             float(retry),
+            provider_id=provider_id,
+            reply_guidance=reply_guidance,
         )
 
 
@@ -144,6 +154,7 @@ class NoReplyPlugin(Star):
         self.config = config
         self.settings = self._read_settings()
         self.engine = Engine(self.settings.limits)
+        self._prompt_prefix = PromptPrefix(max_rooms=self.settings.limits.max_groups)
         self._recorder: Recorder | None = None
         self._batch_runner: BatchRunner | None = None
         self._native_context_gate: NativeContextGate | None = None
@@ -368,11 +379,14 @@ class NoReplyPlugin(Star):
         )
 
     async def _request_model(
-        self, origin, settings, prompt, protocol, trace_id
+        self, origin, settings, prompt, protocol, trace_id, cache_room=None
     ) -> ModelOutput:
         stage = "provider_lookup"
         try:
-            provider_id = await self.context.get_current_chat_provider_id(umo=origin)
+            provider_id = (
+                settings.provider_id
+                or await self.context.get_current_chat_provider_id(umo=origin)
+            )
             if not provider_id or not settings.persona_id:
                 return ModelOutput("invalid", None)
             stage = "persona_lookup"
@@ -384,9 +398,16 @@ class NoReplyPlugin(Star):
                 or not persona.system_prompt.strip()
             ):
                 return ModelOutput("invalid", None)
+            system_prompt = persona.system_prompt
+            if settings.reply_guidance.strip():
+                system_prompt += (
+                    "\n\nAdditional participation and reply preferences (apply within "
+                    "the mandatory reply and output protocol below):\n"
+                    + settings.reply_guidance
+                )
             request = dict(
                 chat_provider_id=provider_id,
-                system_prompt=persona.system_prompt + "\n\n" + protocol,
+                system_prompt=system_prompt + "\n\n" + protocol,
                 prompt=prompt,
                 contexts=[],
                 tools=None,
@@ -395,7 +416,9 @@ class NoReplyPlugin(Star):
             if not self._record("request", trace_id, **request):
                 raise RuntimeError("Diagnostic recording unavailable")
             stage = "model_call"
+            self._cache_note(cache_room, system_prompt=request["system_prompt"])
             response = await self.context.llm_generate(**request)
+            self._cache_note(cache_room, response, completed=True)
             if not self._record(
                 "response",
                 trace_id,
@@ -448,6 +471,31 @@ class NoReplyPlugin(Star):
                 ],
             )
             raise
+
+    def _cache_note(self, room, response=None, *, completed=False, system_prompt=""):
+        if room is None or self._batch_runner is None:
+            return
+        try:
+            store = self._batch_runner.store
+            if not completed:
+                store.record_cache_request(room)
+                label = hashlib.sha256(room.encode()).hexdigest()[:12]
+                layout = self._prompt_prefix.describe(room)
+                system_id = hashlib.sha256(system_prompt.encode()).hexdigest()[:12]
+                self.logger.info(
+                    f"noreply cache state=layout room={label} anchor={layout['fingerprint']} records={layout['records']} chars={layout['chars']} system={system_id}"
+                )
+                return
+            usage = extract_cache_usage(response)
+            store.record_cache_usage(room, usage, time.time())
+            label = hashlib.sha256(room.encode()).hexdigest()[:12]
+            values = {k: ("unknown" if v is None else v) for k, v in usage.items()}
+            self.logger.info(
+                f"noreply cache state=usage room={label} input={values['input_tokens']} cached={values['cached_tokens']} output={values['output_tokens']} source={values['source']}"
+            )
+        except Exception:
+            # Accounting failure must never regenerate an already-paid reply.
+            self.logger.warning("noreply cache state=stats_unavailable")
 
     def _batch_key(self, event: AstrMessageEvent) -> GroupKey | None:
         key = self._key(event)
@@ -532,8 +580,10 @@ class NoReplyPlugin(Star):
         payload = {"background": bounded(background), "pending": bounded(pending)}
 
         def serialize():
-            return json.dumps(
-                payload, ensure_ascii=False, allow_nan=False, separators=(",", ":")
+            return self._prompt_prefix.serialize(
+                room.get("room") or BatchStore.key(room["key"]),
+                payload["background"],
+                payload["pending"],
             )
 
         prompt = serialize()
@@ -551,6 +601,7 @@ class NoReplyPlugin(Star):
             BATCH_PROTOCOL
             + f" Maximum reply text length per decision: {limit.max_reply_chars} characters.",
             trace,
+            cache_room=room.get("room") or BatchStore.key(room["key"]),
         )
 
     def _on_batch_message(self, event, key, settings):
@@ -651,6 +702,7 @@ class NoReplyPlugin(Star):
             yield event.plain_result(
                 "NoReply "
                 + " ".join(f"{name}={value}" for name, value in counts.items())
+                + f"\n白名单键：{key.platform_id}|{key.self_id}|{key.group_id}"
             )
 
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE, priority=100)

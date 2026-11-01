@@ -1,5 +1,17 @@
 name: astrbot_plugin_noreply
 display_name: AstrBot NoReply
-desc: Context-aware text replies or silence in explicitly allowed groups.
+short_desc: 让模型结合群聊上下文，自主决定回复或保持沉默。
+desc: >-
+  以群为单位保存独立上下文，将待判消息持久化并批量逐条判断；
+  普通消息与 @机器人共用链路，@必须回复，合法回复按序发送。
+  提供模型与人设选择、群范围、节奏、上下文预算和私有诊断设置。
 version: v0.1.0
 author: M.Joe
+repo: https://github.com/678mjoe/astrbot_plugin_noreply
+astrbot_version: ">=4.29.3"
+support_platforms:
+  - qq_official
+tags:
+  - 群聊
+  - 自主回复
+  - 上下文

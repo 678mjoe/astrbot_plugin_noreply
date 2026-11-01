@@ -2,7 +2,7 @@
 
 ## 先读与当前目标
 
-本项目是 AstrBot 自主群聊插件。当前主路径为持久化逐消息批量判定，用户已批准全群正式 live；先读 `README.md`、`docs/BATCH_JUDGMENTS.md` 和 `docs/IMPLEMENTATION_STATUS.md`。旧 M1/M2 试验记录是历史证据，不代表当前关闭或只限单群。正常 Agent 历史桥接仍未实现。
+本项目是 AstrBot 自主群聊插件。当前主路径为持久化逐消息批量判定；当前工作是开源与市场准备，先读 `README.md`、`docs/CONFIGURATION.md`、`docs/PUBLISHING.md` 和 `docs/IMPLEMENTATION_STATUS.md`。用户已恢复全群正式 live，但本轮发布准备不授权改动生产、远程推送或提交市场。旧 M1/M2 试验记录是历史证据，不代表当前关闭或只限单群。正常 Agent 历史桥接仍未实现。
 
 `ROADMAP.md` 是当前方案；`docs/archive/` 是保留证据的历史材料，若版本、测试路径或目录描述冲突，以当前路线图与 `docs/COMPATIBILITY.md` 为准。
 
@@ -12,7 +12,7 @@
 
 可在本项目内创建插件代码、测试、开发虚拟环境和必要的依赖声明，并运行本地假 Provider/事件桩测试。可对照包含的源码快照或官方公开源码核对 API；优先完成离线行为，而不是建立新的服务架构。
 
-用本机已有 Git 作者身份，小步提交。用户本次已创建 `678mjoe/astrbot_plugin_noreply` 并授权上传当前代码与脱敏验证记录；仅为这次操作添加 SSH origin 并推送，不擅自改可见性、许可证或把此授权延伸为今后自动推送。
+用本机已有 Git 作者身份，小步提交。用户本次已创建 `678mjoe/astrbot_plugin_noreply` 并授权上传当前代码与脱敏验证记录；仅为这次操作添加 SSH origin 并推送，不擅自改可见性或把此授权延伸为今后自动推送。用户现已明确选择 MIT；仅本项目新写代码/文档按 MIT，研究快照保留上游原许可。
 
 ## 不可越过的边界
 

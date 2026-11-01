@@ -185,7 +185,7 @@ def test_shipped_configuration_produces_no_calls_with_schema_defaults(tmp_path):
     assert plugin.settings.allowed_groups == frozenset()
     metadata = PluginManager._load_plugin_metadata(str(ROOT))
     assert metadata.name == "astrbot_plugin_noreply"
-    assert metadata.repo is None
+    assert metadata.repo == "https://github.com/678mjoe/astrbot_plugin_noreply"
 
 
 def test_plugin_supports_loader_package_import():
