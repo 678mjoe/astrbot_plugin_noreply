@@ -7,7 +7,6 @@ desc: >-
   多条消息可在一次模型调用中逐条处理，各群独立保存聊天背景，忙时排队。
   支持通过 WebUI 配置人设、参与群、回复策略、发言间隔和背景条数，
   并用命令清空当前群上下文、重新开始。
-  当前支持 QQ 官方机器人文本群聊；即使最终不发言，模型判断仍会计费。
 version: v0.1.0
 author: M.Joe
 repo: https://github.com/678mjoe/astrbot_plugin_noreply
